@@ -1,7 +1,7 @@
 <?php
 /*  $Id$ */
 
-class phpdotnet extends PhDHelper {
+abstract class phpdotnet extends PhDTheme {
     protected $elementmap = array(
         'acronym'               => 'format_suppressed_tags',
         'function'              => 'format_suppressed_tags',
@@ -80,7 +80,21 @@ class phpdotnet extends PhDHelper {
     protected $textmap =        array(
         'acronym'               => 'format_acronym_text',
         'function'              => 'format_function_text',
-        'methodname'            => 'format_function_text',
+        'methodname'            => array(
+            /* DEFAULT */          'format_function_text',
+            'constructorsynopsis' => array(
+                /* DEFAULT */      'format_function_text',
+                'classsynopsis' => 'format_classsynopsis_methodsynopsis_methodname_text',
+            ),
+            'methodsynopsis'    => array(
+                /* DEFAULT */      'format_function_text',
+                'classsynopsis' => 'format_classsynopsis_methodsynopsis_methodname_text',
+            ),
+            'destructorsynopsis' => array(
+                /* DEFAULT */      'format_function_text',
+                'classsynopsis' => 'format_classsynopsis_methodsynopsis_methodname_text',
+            ),
+        ),
         'type'                  => array(
             /* DEFAULT */          'format_type_text',
             'classsynopsisinfo' => false,
@@ -353,14 +367,34 @@ class phpdotnet extends PhDHelper {
         /* ignore it */
         return "";
     }
-    public function format_function_text($value, $tag) {
+    
+    public function format_classsynopsis_methodsynopsis_methodname_text($value, $tag) {
+        $display_value = $this->format->format_classsynopsis_methodsynopsis_methodname_text($value, $tag);
+        return $this->format_function_text($value, $tag, $display_value);
+    }
+    
+    public function format_function_text($value, $tag, $display_value = null) {
+        if ($display_value === null) {
+            $display_value = $value;
+        }
+        
         $link = strtolower(str_replace(array("__", "_", "::", "->"), array("", "-", "-", "-"), $value));
-
-        if ($this->CURRENT_FUNCTION === $link || !($filename = PhDHelper::getFilename("function.$link"))) {
-            return '<b>' .$value.($tag == "function" ? "()" : ""). '</b>';
+        $oop_link = strtolower(str_replace(array("_", "::", "->"), array("", ".", "."), $value));
+        
+        if (
+            (
+                $this->CURRENT_FUNCTION === $link ||
+                !($filename = PhDHelper::getFilename("function.$link"))
+            ) &&
+            (
+                $this->CURRENT_ID === $oop_link ||
+                !($filename = PhDHelper::getFilename($oop_link))
+            )
+        ) {
+            return '<b>' .$display_value.($tag == "function" ? "()" : ""). '</b>';
         }
 
-        return '<a href="' .($this->chunked ? "" : "#").$filename. '.' .$this->ext. '" class="function">' .$value.($tag == "function" ? "()" : ""). '</a>';
+        return '<a href="' .($this->chunked ? "" : "#").$filename. '.' .$this->ext. '" class="function">' .$display_value.($tag == "function" ? "()" : ""). '</a>';
     }
     public function format_type_text($type, $tagname) {
         $t = strtolower($type);
@@ -392,7 +426,11 @@ class phpdotnet extends PhDHelper {
             $href = "language.pseudo-types";
             $fragment = "language.types.$t";
             break;
+        default:
+            /* Check if its a classname. */
+            $href = PhDTheme::getFilename("class.$t");
         }
+
         if ($href && $this->chunked) {
             return '<a href="' .$href. '.' .$this->ext.($fragment ? "#$fragment" : ""). '" class="' .$tagname. ' ' .$type. '">' .$type. '</a>';
         }
