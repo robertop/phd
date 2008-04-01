@@ -2,40 +2,22 @@
 <?php
 /*  $Id$ */
 
-function err($no, $str, $file, $line) {
-    global $notify;
-    if (strpos($str, "No mapper") !== false) {
-//        $notify->update("Another missing function", strstr($str, "'"))->show();
-        return false;
-    }
-
-    $err = new PHNotify("Something wrong!", "$str\n$file:$line\n", "dialog-error");
-    $err
-        ->urgency(PHNotify::URGENCY_CRITICAL)
-        ->timeout(PHNotify::EXPIRES_NEVER)
-        ->hint("x", 1680/2)->hint("y", 1050/2)
-        ->show();
-    return false;
-}
-
-if ($err = extension_loaded("phnotify")) {
-    $notify = new PHNotify("Starting build");
-    $notify->urgency(PHNotify::URGENCY_LOW)->hint("x", 1680)->hint("y", 10)->show();
-    $start = microtime(true);
-    set_error_handler("err");
-}
-
+/* {{{ Find the $ROOT directory of PhD
+       @php_dir@ will be replaced by the pear package manager 
+       If @php_dir@ however hasn't been replaced by anything,
+       fallback to the dir containing this file */
 $ROOT = "@php_dir@/phd";
 if ($ROOT == "@php_dir"."@/phd") {
     $ROOT = dirname(__FILE__);
 }
+/* }}} */
 
 (@include $ROOT."/config.php")
     && isset($OPTIONS)
     && is_array($OPTIONS)
     && isset($OPTIONS["output_format"], $OPTIONS["output_theme"])
     && is_array($OPTIONS["output_theme"])
-    or die("Invalid configuration/file not found.\nYou need to run setup/setup.php first\n");
+    or die("Invalid configuration/file not found.\nThis should never happen, did you edit config.php yourself?\n");
 
 require $ROOT. "/include/PhDReader.class.php";
 require $ROOT. "/include/PhDPartialReader.class.php";
@@ -43,24 +25,46 @@ require $ROOT. "/include/PhDHelper.class.php";
 require $ROOT. "/include/PhDFormat.class.php";
 require $ROOT. "/include/PhDTheme.class.php";
 
-if ($OPTIONS["index"]) {
+/* {{{ Build the .ser file names to allow multiple sources for PHD. */
+$OPTIONS['index_location'] = $OPTIONS['xml_root'] . DIRECTORY_SEPARATOR . '.index_' . basename($OPTIONS['xml_file'], '.xml') . '.ser';
+$OPTIONS['refnames_location'] = $OPTIONS['xml_root'] . DIRECTORY_SEPARATOR . '.refnames_' . basename($OPTIONS['xml_file'], '.xml') . '.ser';
+/* }}} */
+
+/* {{{ Index the DocBook file or load from .ser cache files
+       NOTE: There are two cache files (where * is the basename of the XML source file):
+        - index_*.ser     (containing the ID infos)
+        - refnames_*.ser  (containing <refname> => File ID) */
+if (!$OPTIONS["index"] && (file_exists($OPTIONS['index_location']) && file_exists($OPTIONS['refnames_location']))) {
+    /* FIXME: Load from sqlite db? */
+    if ($OPTIONS["verbose"] & VERBOSE_INDEXING) {
+        v("Unserializing cached index files...\n");
+    }
+    $IDs = unserialize(file_get_contents($OPTIONS['index_location']));
+    $REFS = unserialize(file_get_contents($OPTIONS['refnames_location']));
+    if ($OPTIONS["verbose"] & VERBOSE_INDEXING) {
+        v("Unserialization done\n");
+    }
+} else {
     if ($OPTIONS["verbose"] & VERBOSE_INDEXING) {
         v("Indexing...\n");
     }
+    /* This file will "return" an $IDs & $REFS array */
     require $ROOT. "/mktoc.php";
+
+    file_put_contents($OPTIONS['index_location'], $ids = serialize($IDs));
+    file_put_contents($OPTIONS['refnames_location'], $refs = serialize($REFS));
+
+    $IDs2 = unserialize($ids);
+    $REFS2 = unserialize($refs);
+    if ($IDs !== $IDs2 || $REFS !== $REFS2) {
+        v("WARNING: Serialized representation does not match");
+    }
+
     if ($OPTIONS["verbose"] & VERBOSE_INDEXING) {
         v("Indexing done\n");
     }
-
-    if ($err) {
-        $mktoc = microtime(true);
-        $notify
-            ->update("mktoc finished", sprintf("mktoc ran for <b>%d</b> sec", $mktoc-$start))
-            ->show();
-    }
-} else {
-    /* FIXME: Load from sqlite db? */
 }
+/* }}} */
 
 foreach($OPTIONS["output_format"] as $output_format) {
     if ($OPTIONS["verbose"] & VERBOSE_FORMAT_RENDERING) {
@@ -72,11 +76,14 @@ foreach($OPTIONS["output_format"] as $output_format) {
         break;
     }
 
+    // {{{ Initialize the output format and fetch the methodmaps
     require $ROOT. "/formats/$output_format.php";
-    $format = new $classname($IDs);
+    $format = new $classname(array($IDs, $REFS));
     $formatmap = $format->getElementMap();
     $formattextmap = $format->getTextMap();
+    /* }}} */
 
+    /* {{{ initialize output themes and fetch the methodmaps */
     $themes = $elementmaps = $textmaps = array();
     foreach($OPTIONS["output_theme"][$output_format] as $theme => $array) {
         is_dir($ROOT. "/themes/$theme") or die("Can't find the '$theme' theme");
@@ -88,8 +95,9 @@ foreach($OPTIONS["output_format"] as $output_format) {
             $themename = basename($themename);
             require_once $ROOT. "/themes/$theme/$themename.php";
             switch($theme) {
+                // FIXME: This is stupid and definetly does not belong in here.
                 case "php":
-                    $themes[$themename] = new $themename($IDs,
+                    $themes[$themename] = new $themename(array($IDs, $REFS),
                         array(
                             "version" => $OPTIONS["version_info"],
                             "acronym" => $OPTIONS["acronyms_file"],
@@ -97,10 +105,10 @@ foreach($OPTIONS["output_format"] as $output_format) {
                     );
                     break;
                 default:
-                    $themes[$themename] = new $themename($IDs);
+                    $themes[$themename] = new $themename(array($IDs, $REFS));
             }
             
-            // WARNING: this needs to go away when we add support for
+            // FIXME: this needs to go away when we add support for
             // things other than xhtml
             $themes[$themename]->registerFormat($format);
             
@@ -118,11 +126,24 @@ foreach($OPTIONS["output_format"] as $output_format) {
         }
 
     }
+    /* }}} */
 
-    if (!empty($OPTIONS["render_ids"])) {
+    /* {{{ Initialize the PhD[Partial]Reader */
+    if (!empty($OPTIONS["render_ids"]) || !empty($OPTIONS["skip_ids"])) {
+        $idlist = $OPTIONS["render_ids"]+$OPTIONS["skip_ids"];
         if ($OPTIONS["verbose"] & VERBOSE_RENDER_STYLE) {
             v("Running partial build\n");
         }
+        if (!is_array($idlist)) {
+            $idlist = array($idlist => 1);
+        }
+        foreach($idlist as $id => $notused) {
+            if (!isset($IDs[$id])) {
+                v("Unknown ID %s, bailing\n", $id);
+                exit(1);
+            }
+        }
+
         $reader = new PhDPartialReader($OPTIONS);
     } else {
         if ($OPTIONS["verbose"] & VERBOSE_RENDER_STYLE) {
@@ -130,13 +151,14 @@ foreach($OPTIONS["output_format"] as $output_format) {
         }
         $reader = new PhDReader($OPTIONS);
     }
+    /* }}} */
 
     while($reader->read()) {
         $nodetype = $reader->nodeType;
 
         switch($nodetype) {
         case XMLReader::ELEMENT:
-        case XMLReader::END_ELEMENT:
+        case XMLReader::END_ELEMENT: /* {{{ */
             $nodename = $reader->name;
             $open     = $nodetype == XMLReader::ELEMENT;
             $isChunk  = $reader->isChunk;
@@ -158,7 +180,7 @@ foreach($OPTIONS["output_format"] as $output_format) {
                     }
                     if ($tag) {
                         if (strncmp($tag, "format_", 7)) {
-                            $retval = $themes[$theme]->transformFromMap($open, $tag, $nodename, $props);
+                            $retval = $themes[$theme]->transformFromMap($open, $tag, $nodename, $attrs, $props);
                             if ($retval !== false) {
                                 $themes[$theme]->appendData($retval, $isChunk);
                                 $skip[] = $theme;
@@ -185,7 +207,7 @@ foreach($OPTIONS["output_format"] as $output_format) {
                         $tag = $reader->notXPath($tag);
                     }
                     if (strncmp($tag, "format_", 7)) {
-                        $retval = $format->transformFromMap($open, $tag, $nodename, $props);
+                        $retval = $format->transformFromMap($open, $tag, $nodename, $attrs, $props);
                         foreach($themes as $name => $theme) {
                             if (!in_array($name, $skip)) {
                                 $theme->appendData($retval, $isChunk);
@@ -203,8 +225,9 @@ foreach($OPTIONS["output_format"] as $output_format) {
                 }
             }
             break;
+            /* }}} */
 
-        case XMLReader::TEXT:
+        case XMLReader::TEXT: /* {{{ */
             $skip = array();
             $value = $reader->value;
             $parentname = $reader->getParentTagName();
@@ -245,22 +268,26 @@ foreach($OPTIONS["output_format"] as $output_format) {
                 }
             }
             break;
+        /* }}} */
 
-        case XMLReader::CDATA:
+        case XMLReader::CDATA: /* {{{ */
             $value = $reader->value;
             $retval = $format->CDATA($value);
             foreach($themes as $name => $theme) {
                 $theme->appendData($retval, false);
             }
             break;
+        /* }}} */
 
         case XMLReader::WHITESPACE:
-        case XMLReader::SIGNIFICANT_WHITESPACE:
+        case XMLReader::SIGNIFICANT_WHITESPACE: /* {{{ */
             $value = $reader->value;
             foreach($themes as $name => $theme) {
                 $theme->appendData($value, false);
             }
             break;
+        /* }}} */
+
         case XMLReader::COMMENT:
         case XMLReader::DOC_TYPE:
             /* swallow it */
@@ -278,18 +305,10 @@ foreach($OPTIONS["output_format"] as $output_format) {
         v("Finished rendering\n");
     }
 
-    if ($err) {
-        $end = microtime(true);
-        $notify
-            ->update(
-                    "PhD build finished",
-                    sprintf("mktoc build: <b>%d</b> sec\nPhD build   : <b>%d</b> sec\n--\nTotal time: <b>%d</b> seconds\n", $mktoc-$start, $end-$mktoc, $end-$start))
-            ->show();
-    }
 } // foreach($OPTIONS["output_thtemes"])
 
 /*
-* vim600: sw=4 ts=4 fdm=syntax syntax=php et
+* vim600: sw=4 ts=4 syntax=php et
 * vim<600: sw=4 ts=4
 */
 

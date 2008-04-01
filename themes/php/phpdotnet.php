@@ -32,6 +32,10 @@ abstract class phpdotnet extends PhDTheme {
             'methodparam'       => false,
             'methodsynopsis'    => false,
         ),
+        'varname'               => array(
+            /* DEFAULT */          false,
+            'fieldsynopsis'     => 'format_fieldsynopsis_varname',
+        ),
         'xref'                  => 'format_link',
 
 
@@ -98,9 +102,12 @@ abstract class phpdotnet extends PhDTheme {
         'type'                  => array(
             /* DEFAULT */          'format_type_text',
             'classsynopsisinfo' => false,
-            'fieldsynopsis'     => false,
-            'methodparam'       => false,
-            'methodsynopsis'    => false,
+            'fieldsynopsis'     => 'format_type_if_object_or_pseudo_text',
+            'methodparam'       => 'format_type_if_object_or_pseudo_text',
+            'methodsynopsis'    => array(
+                /* DEFAULT */      'format_type_if_object_or_pseudo_text',
+                'classsynopsis' => false,
+            ),
         ),
         'refname'               => 'format_refname_text',
 
@@ -112,8 +119,20 @@ abstract class phpdotnet extends PhDTheme {
     protected $lang = "en";
 
     protected $CURRENT_ID = "";
-    protected $CURRENT_FUNCTION = null;
     protected $refname;
+
+    /* Current Chunk settings */
+    protected $cchunk          = array();
+    /* Default Chunk settings */
+    protected $dchunk          = array(
+        "fieldsynopsis"                => array(
+            "modifier"                          => "public",
+        ),
+        "container_chunk"              => null,
+        "qandaentry"                   => array(
+        ),
+        "examples"                     => 0,
+    );
 
     public function __construct(array $IDs, array $filenames, $ext = "php", $chunked = true) {
         parent::__construct($IDs, $ext);
@@ -182,13 +201,17 @@ abstract class phpdotnet extends PhDTheme {
         if ($open) {
             $content = $fragment = "";
             $class = $name;
+
             if(isset($attrs[PhDReader::XMLNS_DOCBOOK]["linkend"])) {
                 $linkto = $attrs[PhDReader::XMLNS_DOCBOOK]["linkend"];
                 $id = $href = PhDHelper::getFilename($linkto);
+
                 if ($id != $linkto) {
                     $fragment = "#$linkto";
                 }
-                $href .= ".".$this->ext;
+                if ($this->chunked) {
+                    $href .= ".".$this->ext;
+                }
             } elseif(isset($attrs[PhDReader::XMLNS_XLINK]["href"])) {
                 $href = $attrs[PhDReader::XMLNS_XLINK]["href"];
                 $content = "&raquo; ";
@@ -215,15 +238,50 @@ abstract class phpdotnet extends PhDTheme {
                 return '<a href="' .$link.$href.$fragment. '" class="' .$class. '">' .$content.$href.$fragment. '</a>';
             } else {
                 if ($this->chunked) {
-                    $link = "";
+                    $link = $href.$fragment;
+                } elseif(isset($linkto)) {
+                    if ($fragment) {
+                        $link = $fragment;
+                    } else {
+                        $link = "#$href";
+                    }
                 } else {
-                    $link = "#";
+                    $link = $href;
                 }
-                return '<a href="' .$link.$href.$fragment. '" class="' .$class. '">' .$content;
+                return '<a href="' .$link. '" class="' .$class. '">' .$content;
             }
         }
         return "</a>";
     }
+    public function format_fieldsynopsis_varname($open, $name, $attrs) {
+        if ($open) {
+            $href = "";
+            if (isset($attrs[PhDReader::XMLNS_DOCBOOK]["linkend"])) {
+                $linkto = $attrs[PhDReader::XMLNS_DOCBOOK]["linkend"];
+                $href = PhDHelper::getFilename($linkto);
+
+                if ($this->chunked) {
+                    if ($href != $linkto) {
+                        $href .= ".{$this->ext}#{$linkto}";
+                    } else {
+                        $href .= '.' .$this->ext;
+                    }
+                } else {
+                    $href = '#' .$linkto;
+                }
+                $href = '<a href="' .$href. '">';
+            }
+            if ($this->cchunk["fieldsynopsis"]["modifier"] == "const") {
+                return '<var class="fieldsynopsis_varname">'.$href;
+            }
+            return '<var class="'.$name.'">'.$href.'$';
+        }
+        if (isset($attrs[PhDReader::XMLNS_DOCBOOK]["linkend"])) {
+            return '</a></var>';
+        }
+        return '</var>';
+    }
+
 
 
 
@@ -247,7 +305,7 @@ abstract class phpdotnet extends PhDTheme {
     }
     public function format_refpurpose($open, $tag, $attrs) {
         if ($open) {
-            return '<p class="verinfo">(' .(htmlspecialchars($this->versionInfo($this->refname), ENT_QUOTES, "UTF-8")). ')</p><p class="refpurpose">'. $this->refname. ' — ';
+            return '<p class="verinfo">(' .(htmlspecialchars($this->versionInfo($this->refname), ENT_QUOTES, "UTF-8")). ')</p><p class="refpurpose dc-title">'. $this->refname. ' — ';
         }
         return "</p>\n";
     }
@@ -258,17 +316,9 @@ abstract class phpdotnet extends PhDTheme {
     public function format_chunk($open, $name, $attrs, $props) {
         if (isset($attrs[PhDReader::XMLNS_XML]["id"])) {
             $this->CURRENT_ID = $id = $attrs[PhDReader::XMLNS_XML]["id"];
-            if ($name == "refentry") {
-                if(strpos($id, "function.") !== false) {
-                    $id = substr($id, 9);
-                }
-                $this->CURRENT_FUNCTION = $id;
-            } else {
-                $this->CURRENT_FUNCTION = null;
-            }
         }
         if ($props["isChunk"]) {
-            $this->tmp["chunk"] = array("examples" => 0);
+            $this->cchunk = $this->dchunk;
         }
         if (isset($props["lang"])) {
             $this->lang = $props["lang"];
@@ -277,10 +327,9 @@ abstract class phpdotnet extends PhDTheme {
     }
     public function format_container_chunk($open, $name, $attrs, $props) {
         $this->CURRENT_ID = $id = $attrs[PhDReader::XMLNS_XML]["id"];
-        $this->CURRENT_FUNCTION = null;
         if ($open) {
             if ($props["isChunk"]) {
-                $this->tmp["chunk"] = array("examples" => 0);
+                $this->cchunk = $this->dchunk;
             }
             if ($name != "reference") {
                 $chunks = PhDHelper::getChildren($id);
@@ -289,10 +338,14 @@ abstract class phpdotnet extends PhDTheme {
                 }
                 $content = '<h2>'.$this->autogen("toc", $props["lang"]). '</h2><ul class="chunklist chunklist_'.$name.'">';
                 foreach($chunks as $chunkid => $junk) {
-                    $content .= '<li><a href="' .($this->chunked ? "" : "#").$chunkid. '.' .$this->ext. '">' .(PhDHelper::getDescription($chunkid, true)). '</a></li>';
+                    if ($this->chunked) {
+                        $content .= '<li><a href="'.$chunkid. '.' .$this->ext. '">' .(PhDHelper::getDescription($chunkid, true)). '</a></li>';
+                    } else {
+                        $content .= '<li><a href="#'.$chunkid. '">' .(PhDHelper::getDescription($chunkid, true)). '</a></li>';
+                    }
                 }
                 $content .= "</ul>\n";
-                $this->tmp["container_chunk"] = $content;
+                $this->cchunk["container_chunk"] = $content;
             }
             return "<div>";
         }
@@ -300,10 +353,14 @@ abstract class phpdotnet extends PhDTheme {
         $content = "";
         if ($name == "reference") {
             $chunks = PhDHelper::getChildren($id);
-            if (count($chunks) > 1) {
+            if (count($chunks)) {
                 $content = '<h2>'.$this->autogen("toc", $props["lang"]). '</h2><ul class="chunklist chunklist_reference">';
                 foreach($chunks as $chunkid => $junk) {
-                    $content .= '<li><a href="' .($this->chunked ? "" : "#").$chunkid. '.' .$this->ext. '">' .(PhDHelper::getDescription($chunkid, false)). '</a> — ' .(PhDHelper::getDescription($chunkid, true)). '</li>';
+                    if ($this->chunked) {
+                        $content .= '<li><a href="'.$chunkid. '.' .$this->ext. '">' .(PhDHelper::getDescription($chunkid, false)). '</a> — ' .(PhDHelper::getDescription($chunkid, true)). '</li>';
+                    } else {
+                        $content .= '<li><a href="#'.$chunkid.'">' .(PhDHelper::getDescription($chunkid, false)). '</a> — ' .(PhDHelper::getDescription($chunkid, true)). '</li>';
+                    }
                 }
                 $content .= "</ul>\n";
             }
@@ -317,15 +374,14 @@ abstract class phpdotnet extends PhDTheme {
             return "<h1>";
         }
         $ret = "";
-        if ($this->tmp["container_chunk"]) {
-            $ret = $this->tmp["container_chunk"];
-            $this->tmp["container_chunk"] = null;
+        if ($this->cchunk["container_chunk"]) {
+            $ret = $this->cchunk["container_chunk"];
+            $this->cchunk["container_chunk"] = null;
         }
         return "</h1>\n" .$ret;
     }
     public function format_root_chunk($open, $name, $attrs) {
         $this->CURRENT_ID = $id = $attrs[PhDReader::XMLNS_XML]["id"];
-        $this->CURRENT_FUNCTION = null;
         if ($open) {
             return "<div>";
         }
@@ -377,24 +433,25 @@ abstract class phpdotnet extends PhDTheme {
         if ($display_value === null) {
             $display_value = $value;
         }
-        
-        $link = strtolower(str_replace(array("__", "_", "::", "->"), array("", "-", "-", "-"), $value));
-        $oop_link = strtolower(str_replace(array("_", "::", "->"), array("", ".", "."), $value));
-        
-        if (
-            (
-                $this->CURRENT_FUNCTION === $link ||
-                !($filename = PhDHelper::getFilename("function.$link"))
-            ) &&
-            (
-                $this->CURRENT_ID === $oop_link ||
-                !($filename = PhDHelper::getFilename($oop_link))
-            )
-        ) {
-            return '<b>' .$display_value.($tag == "function" ? "()" : ""). '</b>';
+        $rel = "";
+        if ($this->format->role == "seealso") {
+            $rel = ' rel="rdfs-seeAlso"';
         }
-
-        return '<a href="' .($this->chunked ? "" : "#").$filename. '.' .$this->ext. '" class="function">' .$display_value.($tag == "function" ? "()" : ""). '</a>';
+        
+        $ref = strtolower(str_replace(array("_", "::", "->"), array("-", "-", "-"), $value));
+        if (($filename = $this->getRefnameLink($ref)) !== null && $this->CURRENT_ID !== $filename) {
+            if ($this->chunked) {
+                return '<a href="'.$filename. '.' .$this->ext. '" class="function"'.$rel.'>' .$display_value.($tag == "function" ? "()" : ""). '</a>';
+            }
+            return '<a href="#'.$filename. '" class="function"'.$rel.'>' .$display_value.($tag == "function" ? "()" : ""). '</a>';
+        }
+        return '<b>' .$display_value.($tag == "function" ? "()" : ""). '</b>';
+    }
+    public function format_type_if_object_or_pseudo_text($type, $tagname) {
+        if (in_array(strtolower($type), array("bool", "int", "double", "boolean", "integer", "float", "string", "array", "object", "resource", "null"))) {
+            return false;
+        }
+        return self::format_type_text($type, $tagname);
     }
     public function format_type_text($type, $tagname) {
         $t = strtolower($type);
@@ -445,7 +502,7 @@ abstract class phpdotnet extends PhDTheme {
             return "";
         }
         if ($open) {
-            return "<p><b>Example#" .++$this->tmp["chunk"]["examples"]. " ";
+            return "<p><b>" . ($this->autogen('example', $props['lang']) . ++$this->cchunk["examples"]) . " ";
         }
         return "</b></p>";
     }
@@ -454,34 +511,37 @@ abstract class phpdotnet extends PhDTheme {
     public function qandaset($stream) {
         $xml = stream_get_contents($stream);
 
-        libxml_use_internal_errors(true);
+        $old = libxml_use_internal_errors(true);
         $doc = new DOMDocument("1.0", "UTF-8");
         $doc->preserveWhitespace = false;
-        $doc->loadHTML(html_entity_decode('<div>' .str_replace("&lt;", "&amp;lt;", $xml) .'</div>', ENT_QUOTES, "UTF-8"));
+        $doc->loadXML(html_entity_decode(str_replace("&", "&amp;amp;", "<div>$xml</div>"), ENT_QUOTES, "UTF-8"));
+        if ($err = libxml_get_errors()) {
+            print_r($err);
+            libxml_clear_errors();
+        }
         fclose($stream);
-        libxml_clear_errors();
-        libxml_use_internal_errors(false);
+        libxml_use_internal_errors($old);
 
         $xpath = new DOMXPath($doc);
-        $nlist = $xpath->query("//html/body/div/dl/dt");
+        $nlist = $xpath->query("//div/dl/dt");
         $ret = '<div class="qandaset"><ol class="qandaset_questions">';
         $i = 0;
         foreach($nlist as $node) {
-            $ret .= '<li><a href="#' .($this->tmp["qandaentry"][$i++]). '">' .(htmlspecialchars($node->textContent,ENT_QUOTES, "UTF-8")). '</a></li>';
+            $ret .= '<li><a href="#' .($this->cchunk["qandaentry"][$i++]). '">' .($node->textContent). '</a></li>';
         }
 
-        return $ret.'</ul>'.$xml.'</div>';
+        return $ret.'</ol>'.$xml.'</div>';
     }
     public function format_qandaentry($open, $name, $attrs) {
         if ($open) {
-            $this->tmp["qandaentry"][] = $attrs[PhDReader::XMLNS_XML]["id"];
+            $this->cchunk["qandaentry"][] = $attrs[PhDReader::XMLNS_XML]["id"];
             return '<dl>';
         }
         return '</dl>';
     }
     public function format_answer($open, $name, $attrs) {
         if ($open) {
-            return '<dd><a name="' .end($this->tmp["qandaentry"]).'"></a>';
+            return '<dd><a name="' .end($this->cchunk["qandaentry"]).'"></a>';
         }
         return "</dd>";
     }

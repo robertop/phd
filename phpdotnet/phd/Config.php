@@ -1,11 +1,13 @@
 <?php
 /* $Id$ */
 
+/* {{{ Print messages to stderr: v("printf-format-text", $arg1, ...) */
 function v($msg) {
     $args = func_get_args();
     $args[0] = date($GLOBALS["OPTIONS"]["date_format"]);
     vfprintf(STDERR, "[%s] $msg", $args);
 }
+/* }}} */
 
 define('VERBOSE_INDEXING',               0x01);
 define('VERBOSE_FORMAT_RENDERING',       0x02);
@@ -16,10 +18,11 @@ define('VERBOSE_PARTIAL_CHILD_READING',  0x20);
 define('VERBOSE_TOC_WRITING',            0x40);
 define('VERBOSE_CHUNK_WRITING',          0x80);
 
-define('VERBOSE_ALL',VERBOSE_INDEXING|VERBOSE_FORMAT_RENDERING|VERBOSE_THEME_RENDERING|VERBOSE_RENDER_STYLE|VERBOSE_PARTIAL_READING|VERBOSE_PARTIAL_CHILD_READING|VERBOSE_TOC_WRITING|VERBOSE_CHUNK_WRITING);
+define('VERBOSE_ALL',                    0xFF);
 
-define("PHD_VERSION", "0.2.1");
+define("PHD_VERSION", "0.2.3");
 
+/* {{{ Default $OPTIONS */
 $OPTIONS = array (
   'output_format' => array('xhtml'),
   'output_theme' => array(
@@ -42,26 +45,34 @@ $OPTIONS = array (
   'enforce_revisions' => false,
   'compatibility_mode' => true,
   'build_log_file' => 'none',
-  'debug' => true,
-  'verbose' => VERBOSE_INDEXING|VERBOSE_FORMAT_RENDERING|VERBOSE_THEME_RENDERING|VERBOSE_RENDER_STYLE|VERBOSE_PARTIAL_READING|VERBOSE_TOC_WRITING,
+  'verbose' => VERBOSE_ALL^(VERBOSE_PARTIAL_CHILD_READING|VERBOSE_CHUNK_WRITING),
   'date_format' => "H:i:s",
   'render_ids' => array(
   ),
+  'skip_ids' => array(
+  ),
+  'output_dir' => '.',
 );
+/* }}} */
 
 
+/* {{{ getopt() options */
 $opts = array(
     "format:"  => "f:", // The format to render (xhtml, pdf...)
     "theme:"   => "t:", // The theme to render (phpweb, bightml..)
     "index:"   => "i:", // Re-index or load from cache
     "docbook:" => "d:", // The Docbook XML file to render from (.manual.xml)
-    "partial:" => "p:", // The ID to render (optionally ignoring its childrens)
+    "output:"  => "o:", // The output directory
+    "partial:" => "p:", // The ID to render (optionally ignoring its children)
+    "skip:"    => "s:", // The ID to skip (optionally skipping its children too)
     "verbose:" => "v",  // Adjust the verbosity level
+    "list::"   => "l::", // List supported themes/formats
     "version"  => "V",  // Print out version information
     "help"     => "h",  // Print out help
 );
+/* }}} */
 
-/* Fix for Windows prior to PHP5.3 */
+/* {{{ Workaround/fix for Windows prior to PHP5.3 */
 if (!function_exists("getopt")) {
     function getopt($short, $long) {
         v("I'm sorry, you are running an operating system that does not support getopt()\n");
@@ -70,15 +81,17 @@ if (!function_exists("getopt")) {
         return array();
     }
 }
+/* }}} */
 
 $args = getopt(implode("", array_values($opts)), array_keys($opts));
 if($args === false) {
     v("Something happend with getopt(), please report a bug\n");
-    exit(-1);
+    exit(1);
 }
 
 $verbose = 0;
 $docbook = false;
+
 foreach($args as $k => $v) {
     switch($k) {
     /* {{{ Docbook file */
@@ -86,15 +99,31 @@ foreach($args as $k => $v) {
     case "docbook":
         if (is_array($v)) {
             v("Can only parse one file at a time\n");
-            exit(-1);
+            exit(1);
         }
         if (!file_exists($v) || is_dir($v) || !is_readable($v)) {
             v("'%s' is not a readable docbook file\n", $v);
-            exit(-1);
+            exit(1);
         }
         $OPTIONS["xml_root"] = dirname($v);
         $OPTIONS["xml_file"] = $v;
         $docbook = true;
+        break;
+    /* }}} */
+
+    /* {{{ Output location */
+    case "o":
+    case "output":
+        if (is_array($v)) {
+            v("Only a single location can be supplied\n");
+            exit(1);
+        }
+        @mkdir($v, 0777, true);
+        if (!is_dir($v) || !is_readable($v)) {
+            v("'%s' is not a valid directory\n", $v);
+            exit(1);
+        }
+        $OPTIONS["output_dir"] = $v;
         break;
     /* }}} */
 
@@ -103,7 +132,7 @@ foreach($args as $k => $v) {
     case "format":
         if ($v != "xhtml") {
             v("Only xhtml is supported at this time\n");
-            exit(-1);
+            exit(1);
         }
         break;
     /* }}} */
@@ -113,7 +142,7 @@ foreach($args as $k => $v) {
     case "index":
         if (is_array($v)) {
             v("You cannot pass %s more than once\n", $k);
-            exit(-1);
+            exit(1);
         }
         switch ($v) {
         case "yes":
@@ -128,8 +157,48 @@ foreach($args as $k => $v) {
             break;
         default:
             v("yes/no || true/false || 1/0 expected\n");
-            exit(-1);
+            exit(1);
         }
+        break;
+    /* }}} */
+
+    /* {{{ Print out a list of formats/themes */
+    case "l":
+    case "list":
+        /* FIXME: This list should be created dynamically */
+        foreach((array)$v as $val) {
+            switch($val) {
+            case "f":
+            case "format":
+            case "formats":
+                echo "Supported formats:\n";
+                echo "\txhtml\n";
+                break;
+
+            case "t":
+            case "theme":
+            case "themes":
+                echo "Supported themes:\n";
+                echo "\tphpweb\n";
+                echo "\tchunkedhtml\n";
+                echo "\tbightml\n";
+                break;
+
+            default:
+                echo "Unknown list type '$val'\n";
+                /* break omitted intentionally */
+
+            case false:
+                echo "Supported formats:\n";
+                echo "\txhtml\n";
+                echo "Supported themes:\n";
+                echo "\tphpweb\n";
+                echo "\tchunkedhtml\n";
+                echo "\tbightml\n";
+                break;
+            }
+        }
+        exit(0);
         break;
     /* }}} */
 
@@ -151,6 +220,24 @@ foreach($args as $k => $v) {
         break;
     /* }}} */
 
+    /* {{{ Skip list */
+    case "s":
+    case "skip":
+        foreach((array)$v as $i => $val) {
+            $recursive = true;
+            if (strpos($val, "=") !== false) {
+                list($val, $recursive) = explode("=", $val);
+
+                if (!is_numeric($recursive) && defined($recursive)) {
+                    $recursive = constant($recursive);
+                }
+                $recursive = (bool) $recursive;
+            }
+            $OPTIONS["skip_ids"][$val] = $recursive;
+        }
+        break;
+    /* }}} */
+
     /* {{{ Output themes */
     case "t":
     case "theme":
@@ -167,8 +254,8 @@ foreach($args as $k => $v) {
                 }
                 break;
             default:
-                v("Unkown theme '%s'\n", $val);
-                exit(-1);
+                v("Unknown theme '%s'\n", $val);
+                exit(1);
             }
         }
         break;
@@ -183,7 +270,7 @@ foreach($args as $k => $v) {
                 } elseif (is_numeric($const)) {
                     $verbose |= (int)$const;
                 } else {
-                    v("Unkown option passed to --$k, $const\n");
+                    v("Unknown option passed to --$k, $const\n");
                 }
             }
         }
@@ -201,59 +288,76 @@ foreach($args as $k => $v) {
         $OPTIONS["verbose"] = $verbose;
         break;
     /* }}} */
-
+    
+    /* {{{ Version info */
     case "V":
     case "version":
         v("PhD version: %s\n", PHD_VERSION);
-        v("Copyright (c) 2007 The PHP Documentation Group\n");
+        v("Copyright (c) 2008 The PHP Documentation Group\n");
         exit(0);
+    /* }}} */
 
+    /* {{{ Help/usage info */
     case "usage":
     case "help":
     case "h":
         echo "PhD version: " .PHD_VERSION;
-        echo "\nCopyright (c) 2007 The PHP Documentation Group\n
+        echo "\nCopyright (c) 2008 The PHP Documentation Group\n
   -v
-  --versbose <int>           Adjusts the verbosity level.
+  --verbose <int>            Adjusts the verbosity level
   -f <formatname>
   --format <formatname>      The build format to use
   -t <themename>
   --theme <themename>        The theme to use
-  -i
-  --index                    Index before rendering or load from cache [NOTE: Not supported yet]
+  -i <bool>
+  --index <bool>             Index before rendering (default) or load from cache (false)
   -d <filename>
   --docbook <filename>       The Docbook file to render from
   -p <id[=bool]>
-  --partial <id[=bool]>      The ID to render, optionally ignoring its children pages (default to true; render childrens)
+  --partial <id[=bool]>      The ID to render, optionally skipping its children chunks (default to true; render children)
+  -s <id[=bool]>
+  --skip <id[=bool]>         The ID to skip, optionally skipping its children chunks (default to true; skip children)
+  -l <formats/themes>
+  --list <formats/themes>    Print out the supported formats/themes (default: both)
+  -o <directory>
+  --output <directory>       The output directory (default: .)
   -V
   --version                  Print the PhD version information
   -h
   --help                     This help
 
-All options can be passed multiple times for greater affect.
+Most options can be passed multiple times for greater affect.
 NOTE: Long options are only supported using PHP5.3\n";
         exit(0);
         break;
+    /* }}} */
 
+    /* {{{ Unsupported option this should *never* happen */
     default:
         v("Hmh, something weird has happend, I don't know this option");
         var_dump($k, $v);
-        exit(-1);
+        exit(1);
+    /* }}} */
     }
 }
 
 
-if (!$docbook) {
+/* {{{ BC for PhD 0.0.* (and PHP5.2 on Windows)
+       i.e. `phd path/to/.manual.xml */
+if (!$docbook && $argc > 1) {
     $arg = $argv[$argc-1];
     if (is_dir($arg)) {
         $OPTIONS["xml_root"] = $arg;
-        $OPTIONS["xml_file"] = $arg . "/.manual.xml";
+        $OPTIONS["xml_file"] = $arg . DIRECTORY_SEPARATOR . ".manual.xml";
     } elseif (is_file($arg)) {
         $OPTIONS["xml_root"] = dirname($arg);
         $OPTIONS["xml_file"] = $arg;
     }
 }
+/* }}} */
 
+/* {{{ If no docbook file was passed, ask for it
+       This loop should be removed in PhD 0.3.0, and replaced with a fatal errormsg */
 while (!is_dir($OPTIONS["xml_root"]) || !is_file($OPTIONS["xml_file"])) {
     print "I need to know where you keep your '.manual.xml' file (I didn't find it in " . $OPTIONS["xml_root"] . "): ";
     $root = trim(fgets(STDIN));
@@ -265,12 +369,15 @@ while (!is_dir($OPTIONS["xml_root"]) || !is_file($OPTIONS["xml_file"])) {
         $OPTIONS["xml_root"] = $root;
     }
 }
+/* }}} */
+
+/* This needs to be done in *all* cases! */
+$OPTIONS["output_dir"] = realpath($OPTIONS["output_dir"]) . DIRECTORY_SEPARATOR;
 
 $OPTIONS["version_info"] = $OPTIONS["xml_root"]."/phpbook/phpbook-xsl/version.xml";
 $OPTIONS["acronyms_file"] = $OPTIONS["xml_root"]."/entities/acronyms.xml";
 
 /*
-* vim600: sw=4 ts=4 fdm=syntax syntax=php et
+* vim600: sw=4 ts=4 syntax=php et
 * vim<600: sw=4 ts=4
 */
-

@@ -5,7 +5,7 @@ abstract class PhDFormat extends PhDHelper {
     private $TABLE          = array();
     
     /* abstract functions */
-    abstract public function transformFromMap($open, $tag, $name, $props);
+    abstract public function transformFromMap($open, $tag, $name, $attrs, $props);
     abstract public function CDATA($data);
     abstract public function TEXT($data);
     abstract public function __call($func, $args);
@@ -32,6 +32,9 @@ abstract class PhDFormat extends PhDHelper {
         $defaults["align"]   = "left";
 
         return array_merge($defaults, $this->TABLE["defaults"], $attrs);
+    }
+    public function getColCount() {
+        return $this->TABLE["cols"];
     }
 
     public function valign($attrs) {

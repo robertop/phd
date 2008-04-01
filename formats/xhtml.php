@@ -9,8 +9,11 @@ class XHTMLPhDFormat extends PhDFormat {
         'affiliation'           => 'format_suppressed_tags',
         'alt'                   => 'format_suppressed_tags',
         'article'               => 'format_container_chunk',
-        'author'                => 'div',
-        'authorgroup'           => 'div', /* DocBook-xsl prints out "by" (i.e. "PHP Manual by ...") */
+        'author'                => array(
+            /* DEFAULT */          'format_author',
+            'authorgroup'       => 'format_authorgroup_author',
+        ),
+        'authorgroup'           => 'div',
         'appendix'              => 'format_container_chunk',
         'application'           => 'span',
         'blockquote'            => 'blockquote',
@@ -25,8 +28,10 @@ class XHTMLPhDFormat extends PhDFormat {
         'co'                    => 'format_co',
         'colophon'              => 'format_chunk',
         'copyright'             => 'format_copyright',
-        'editor'                => 'div', /* Docbook-xsl prints "edited by" */
+        'editor'                => 'format_editor',
         'firstname'             => 'format_name',
+        'footnote'              => 'format_footnote',
+        'footnoteref'           => 'format_footnoteref',
         'surname'               => 'format_name',
         'othername'             => 'format_name',
         'optional'              => 'span',
@@ -57,7 +62,14 @@ class XHTMLPhDFormat extends PhDFormat {
         'colspec'               => 'format_colspec',
         'command'               => 'strong',
         'computeroutput'        => 'span',
-        'constant'              => 'format_constant',
+        /* FIXME: This is one crazy stupid workaround for footnotes */
+        'constant'              => array(
+            /* DEFAULT */          'format_constant',
+            'para'              => array(
+                /* DEFAULT */      'format_constant',
+                'footnote'      => 'format_footnote_constant',
+            ),
+        ),
         'constructorsynopsis'   => 'format_methodsynopsis',
         'destructorsynopsis'    => 'format_methodsynopsis',
         'emphasis'              => 'em',
@@ -107,7 +119,7 @@ class XHTMLPhDFormat extends PhDFormat {
             /* DEFAULT */          'li',
             'varlistentry'      => 'format_varlistentry_listitem',
         ),
-        'literal'               => 'i',
+        'literal'               => 'format_literal',
         'literallayout'         => 'pre',
         'manvolnum'             => 'format_manvolnum',
         'mediaobject'           => 'format_mediaobject',
@@ -134,6 +146,8 @@ class XHTMLPhDFormat extends PhDFormat {
             /* DEFAULT */          'p',
             'example'           => 'format_example_content',
             'note'              => 'format_note_content',
+            'footnote'          => 'format_footnote_para',
+            'refsect1'          => 'format_refsect1_para',
         ),
         'parameter'             => array(
             /* DEFAULT */          'format_parameter',
@@ -141,7 +155,7 @@ class XHTMLPhDFormat extends PhDFormat {
         ),
         'part'                  => 'format_container_chunk',
         'partintro'             => 'div',
-        'personname'            => 'span',
+        'personname'            => 'format_personname',
         'preface'               => 'format_chunk',
         'primaryie'             => 'format_suppressed_tags',
         'procedure'             => 'format_procedure',
@@ -197,6 +211,7 @@ class XHTMLPhDFormat extends PhDFormat {
         'table'                 => 'format_table',
         'term'                  => 'format_term',
         'tfoot'                 => 'format_th',
+        'tbody'                 => 'format_tbody',
         'thead'                 => 'format_th',
         'tgroup'                => 'format_tgroup',
         'tip'                   => 'format_admonition',
@@ -222,6 +237,7 @@ class XHTMLPhDFormat extends PhDFormat {
             'sect1'             => 'h2',
             'sect2'             => 'h3',
             'sect3'             => 'h4',
+            'sect4'             => 'h5',
             'segmentedlist'     => 'strong',
             'table'             => 'format_table_title',
             'variablelist'      => 'strong',
@@ -276,11 +292,56 @@ class XHTMLPhDFormat extends PhDFormat {
                 'classsynopsis' => 'format_classsynopsis_methodsynopsis_methodname_text',
             ),
         ),
+        'para'                  => array(
+            /* DEFAULT */          false,
+            'footnote'             => 'format_footnote_para_text',
+        ),
+        /* FIXME: This is one crazy stupid workaround for footnotes */
+        'constant'              => array(
+            /* DEFAULT */          false,
+            'para'              => array(
+                /* DEFAULT */      false,
+                'footnote'      => 'format_footnote_constant_text',
+            ),
+        ),
+        'literal'               => 'format_literal_text',
+
     );
 
 
-    protected $role        = false;
-    protected $tmp         = array();
+    public $role        = false;
+    /* Current Chunk variables */
+    protected $cchunk      = array();
+    /* Default Chunk variables */
+    protected $dchunk      = array(
+        "classsynopsis"            => array(
+            "close"                         => false,
+            "classname"                     => false,
+        ),
+        "classsynopsisinfo"        => array(
+            "implements"                    => false,
+            "ooclass"                       => false,
+        ),
+        "fieldsynopsis"            => array(
+            "modifier"                      => "public",
+        ),
+        "co"                       => 0,
+        "callouts"                 => 0,
+        "segmentedlist"            => array(
+            "seglistitem"                   => 0,
+            "segtitle"                      => array(
+            ),
+        ),
+        "table"                    => false,
+        "procedure"                => false,
+        "mediaobject"              => array(
+            "alt"                           => false,
+        ),
+        "footnote"                 => array(
+        ),
+        "tablefootnotes"           => array(
+        ),
+    );
     
     public function __construct(array $IDs) {
         parent::__construct($IDs);
@@ -292,9 +353,14 @@ class XHTMLPhDFormat extends PhDFormat {
         }
         return "<font color='red' size='+3'>/{$args[1]}</font>";
     }
-    public function transformFromMap($open, $tag, $name, $props) {
+    public function transformFromMap($open, $tag, $name, $attrs, $props) {
         if ($open) {
-            return '<' .$tag. ' class="' .$name. '"' . ($props["empty"] ? '/' : "") . '>';
+            $idstr = "";
+            if (isset($attrs[PhDReader::XMLNS_XML]["id"])) {
+                $id = $attrs[PhDReader::XMLNS_XML]["id"];
+                $idstr = ' id="' .$id. '" name="' .$id. '"';
+            }
+            return '<' .$tag. ' class="' .$name. '"' . ($props["empty"] ? '/' : "") . $idstr. '>';
         }
         return '</' .$tag. '>';
     }
@@ -318,21 +384,83 @@ class XHTMLPhDFormat extends PhDFormat {
         /* Suppress any content */
         return "";
     }
-
+    
+    public function format_literal($open, $name, $attrs) {
+        if ($open) {
+            if (isset($attrs[PhDReader::XMLNS_DOCBOOK]["role"])) {
+                $this->role = $attrs[PhDReader::XMLNS_DOCBOOK]["role"];
+            } else {
+                $this->role = false;
+            }
+            return '<i>';
+        }
+        $this->role = false;
+        return '</i>';
+    }
+    public function format_literal_text($value, $tag) {
+        switch ($this->role) {
+            case 'infdec':
+                $value = (float)$value;
+                $p = strpos($value, '.');
+                $str = substr($value, 0, $p + 1);
+                $str .= '<span style="text-decoration: overline;">';
+                $str .= substr($value, $p + 1);
+                $str .= '</span>';
+                return $str;
+            default:
+                return $this->TEXT($value);
+        }
+    }
+    
     public function format_copyright($open, $name, $attrs) {
         if ($open) {
             return '<div class="'.$name.'">&copy; ';
         }
         return '</div>';
     }
+    public function format_author($open, $name, $attrs, $props) {
+        if ($open) {
+            return '<div class="' .$name. ' vcard">';
+        }
+        return "</div>";
+    }
+    public function format_personname($open, $name, $attrs, $props) {
+        if ($open) {
+            return '<span class="' .$name. ' fn">';
+        }
+        return "</span>";
+    }
     public function format_name($open, $name, $attrs) {
         if ($open) {
-            return ' <span class="'.$name.'">';
+            $class = "";
+            switch($name) {
+            case "firstname":
+                $class = " given-name";
+                break;
+
+            case "surname":
+                $class = " family-name";
+                break;
+
+            case "othername":
+                if (isset($attrs[PhDReader::XMLNS_DOCBOOK]["role"])) {
+                    /* We maight want to add support for other roles */
+                    switch($attrs[PhDReader::XMLNS_DOCBOOK]["role"]) {
+                    case "nickname":
+                        $class = " nickname";
+                        break;
+                    }
+                }
+                break;
+            }
+
+            return ' <span class="' . $name . $class . '">';
         }
         return '</span> ';
     }
 
     public function format_container_chunk($open, $name, $attrs) {
+        $this->cchunk = $this->dchunk;
         if ($open) {
             return '<div id="' .$attrs[PhDReader::XMLNS_XML]["id"]. '" class="' .$name. '">';
         }
@@ -346,27 +474,59 @@ class XHTMLPhDFormat extends PhDFormat {
     }
     public function format_chunk($open, $name, $attrs) {
         if ($open) {
+            $this->cchunk = $this->dchunk;
             if(isset($attrs[PhDReader::XMLNS_XML]["id"])) {
-                return '<div id="' .$attrs[PhDReader::XMLNS_XML]["id"]. '" class="' .$name. '">';
+                $class = $name;
+                if ($name === "refentry") {
+                    //$class .= " -rel-posting";
+                }
+                return '<div id="' .$attrs[PhDReader::XMLNS_XML]["id"]. '" class="' .$class. '">';
             }
             return '<div class="' .$name. '">';
         }
-        return "</div>";
+        $str = "";
+        foreach ($this->cchunk["footnote"] as $k => $note) {
+            $str .= '<div class="footnote">';
+            $str .= '<a name="fnid' .$note["id"]. '" href="#fn' .$note["id"]. '"><sup>[' .($k + 1). ']</sup></a>';
+            $str .= $note["str"];
+            $str .= "</div>\n";
+        }
+        $this->cchunk["footnote"] = $this->dchunk["footnote"];
+
+        return $str. "</div>";
+    }
+    public function format_refsect1_para($open, $name, $attrs, $props) {
+        if ($open) {
+            switch ($props["sibling"]) {
+            case "methodsynopsis":
+            case "constructorsynopsis":
+            case "destructorsynopsis":
+                return '<p class="'.$name.' rdfs-comment">';
+                break;
+
+            default:
+                return '<p class="'.$name.'">';
+            }
+
+        }
+        return '</p>';
     }
     public function format_refsect($open, $name, $attrs) {
         if ($open) {
             if(!isset($attrs[PhDReader::XMLNS_DOCBOOK]["role"])) {
-                $attrs[PhDReader::XMLNS_DOCBOOK] = "unkown";
+                $attrs[PhDReader::XMLNS_DOCBOOK]["role"] = "unknown";
             }
-            return '<div class="' .$name.' ' .$attrs[PhDReader::XMLNS_DOCBOOK]["role"]. '">';
+            $this->role = $role = $attrs[PhDReader::XMLNS_DOCBOOK]["role"];
+            return '<div class="' .$name.' ' .$role. '">';
         }
+        $this->role = null;
         return "</div>\n";
     }
 
     public function format_classsynopsisinfo_oointerface($open, $name, $attrs) {
         if ($open) {
-            if (isset($this->tmp["classsynopsisinfo"]) && !isset($this->tmp["classsynopsisinfo"]["implements"])) {
-                $this->tmp["classsynopsisinfo"]["implements"] = true;
+            if ($this->cchunk["classsynopsisinfo"]["implements"] === false) {
+                $this->cchunk["classsynopsisinfo"]["implements"] = true;
                 return '<span class="'.$name.'">implements ';
             }
             return '<span class="'.$name.'">, ';
@@ -376,8 +536,8 @@ class XHTMLPhDFormat extends PhDFormat {
     }
     public function format_classsynopsisinfo_ooclass_classname($open, $name, $attrs) {
         if ($open) {
-            if (isset($this->tmp["classsynopsisinfo"]) && !isset($this->tmp["classsynopsisinfo"]["ooclass"])) {
-                $this->tmp["classsynopsisinfo"]["ooclass"] = true;
+            if ($this->cchunk["classsynopsisinfo"]["ooclass"] === false) {
+                $this->cchunk["classsynopsisinfo"]["ooclass"] = true;
                 return ' class <b class="'.$name.'">';
             }
             return '<b class="'.$name.'"> ';
@@ -385,7 +545,7 @@ class XHTMLPhDFormat extends PhDFormat {
         return "</b>";
     }
     public function format_classsynopsisinfo($open, $name, $attrs) {
-        $this->tmp["classsynopsisinfo"] = array();
+        $this->cchunk["classsynopsisinfo"] = $this->dchunk["classsynopsisinfo"];
         if ($open) {
             if (isset($attrs[PhDReader::XMLNS_DOCBOOK]["role"]) && $attrs[PhDReader::XMLNS_DOCBOOK]["role"] == "comment") {
                 return '<div class="'.$name.' classsynopsisinfo_comment">/* ';
@@ -396,7 +556,7 @@ class XHTMLPhDFormat extends PhDFormat {
         if (isset($attrs[PhDReader::XMLNS_DOCBOOK]["role"]) && $attrs[PhDReader::XMLNS_DOCBOOK]["role"] == "comment") {
             return ' */</div>';
         }
-        $this->tmp["classsynopsisinfo"]["close"] = true;
+        $this->cchunk["classsynopsis"]["close"] = true;
         return ' {</div>';
     }
 
@@ -405,52 +565,53 @@ class XHTMLPhDFormat extends PhDFormat {
             return '<div class="'.$name.'">';
         }
 
-        if (isset($this->tmp["classsynopsisinfo"]) && isset($this->tmp["classsynopsisinfo"]["close"]) && $this->tmp["classsynopsisinfo"]["close"]) {
-            $this->tmp["classsynopsisinfo"]["close"] = false;
+        if ($this->cchunk["classsynopsis"]["close"] === true) {
+            $this->cchunk["classsynopsis"]["close"] = false;
             return "}</div>";
         }
         return "</div>";
     }
     
     public function format_classsynopsis_ooclass_classname_text($value, $tag) {
-        $this->tmp["classsynopsis"]["classname"] = $value;
-        return $value;
+        $this->cchunk["classsynopsis"]["classname"] = $value;
+        return $this->TEXT($value);
     }
     
     public function format_classsynopsis_methodsynopsis_methodname_text($value, $tag) {
-        if (!isset($this->tmp["classsynopsis"]["classname"])) {
+        $value = $this->TEXT($value);
+        if ($this->cchunk["classsynopsis"]["classname"] === false) {
             return $value;
         }
         if (strpos($value, '::')) {
             $explode = '::';
-        } else if (strpos($value, '->')) {
+        } elseif (strpos($value, '->')) {
             $explode = '->';
         } else {
             return $value;
         }
 
         list($class, $method) = explode($explode, $value);
-        if ($class !== $this->tmp["classsynopsis"]["classname"]) {
+        if ($class !== $this->cchunk["classsynopsis"]["classname"]) {
             return $value;
         }
         return $method;
     }
     
     public function format_fieldsynopsis($open, $name, $attrs) {
-        $this->tmp["fieldsynopsis"] = array();
+        $this->cchunk["fieldsynopsis"] = $this->dchunk["fieldsynopsis"];
         if ($open) {
             return '<div class="'.$name.'">';
         }
         return ";</div>\n";
     }
     public function format_fieldsynopsis_modifier_text($value, $tag) {
-        $this->tmp["fieldsynopsis"]["modifier"] = trim($value);
-        return $value;
+        $this->cchunk["fieldsynopsis"]["modifier"] = trim($value);
+        return $this->TEXT($value);
     }
     public function format_methodsynopsis($open, $name, $attrs) {
         if ($open) {
             $this->params = array("count" => 0, "opt" => 0, "content" => "");
-            return '<div class="'.$name.'">';
+            return '<div class="'.$name.' dc-description">';
         }
         $content = "";
         if ($this->params["opt"]) {
@@ -527,7 +688,7 @@ class XHTMLPhDFormat extends PhDFormat {
     }
     public function format_fieldsynopsis_varname($open, $name, $attrs) {
         if ($open) {
-            if (isset($this->tmp["fieldsynopsis"]["modifier"]) && $this->tmp["fieldsynopsis"]["modifier"] == "const") {
+            if ($this->cchunk["fieldsynopsis"]["modifier"] === "const") {
                 return '<var class="fieldsynopsis_varname">';
             }
             return '<var class="'.$name.'">$';
@@ -535,28 +696,80 @@ class XHTMLPhDFormat extends PhDFormat {
         return '</var>';
     }
 
+    public function format_footnoteref($open, $name, $attrs, $props) {
+        if ($open) {
+            $linkend = $attrs[PhDReader::XMLNS_DOCBOOK]["linkend"];
+            $found = false;
+            foreach($this->cchunk["footnote"] as $k => $note) {
+                if ($note["id"] === $linkend) {
+                    return '<a href="#fnid' .$note["id"]. '"><sup>[' .($k + 1). ']</sup></a>';
+                }
+            }
+            trigger_error("footnoteref ID '$linkend' not found", E_USER_WARNING);
+            return "";
+        }
+    }
+    public function format_footnote($open, $name, $attrs, $props) {
+        if ($open) {
+            $count = count($this->cchunk["footnote"]);
+            $noteid = isset($attrs[PhDReader::XMLNS_XML]["id"]) ? $attrs[PhDReader::XMLNS_XML]["id"] : $count + 1;
+            $note = array("id" => $noteid, "str" => "");
+            $this->cchunk["footnote"][$count] = $note;
+            if ($this->cchunk["table"]) {
+                $this->cchunk["tablefootnotes"][$count] = $noteid;
+            }
+            return '<a href="#fnid' .$noteid. '" name="fn'.$noteid.'"><sup>[' .($count + 1). ']</sup></a>';
+        }
+        return "";
+    }
+
+    /* {{{ FIXME: These are crazy workarounds :( */
+    public function format_footnote_constant($open, $name, $attrs, $props) {
+        $k = count($this->cchunk["footnote"]) - 1;
+        $this->cchunk["footnote"][$k]["str"] .= self::format_constant($open, $name, $attrs, $props);
+        return "";
+    }
+    public function format_footnote_constant_text($value, $tag) {
+        $k = count($this->cchunk["footnote"]) - 1;
+        $this->cchunk["footnote"][$k]["str"] .= $value;
+        return "";
+    }
+    public function format_footnote_para($open, $name, $attrs, $props) {
+        $k = count($this->cchunk["footnote"]) - 1;
+        if ($open) {
+            $this->cchunk["footnote"][$k]["str"] .= '<span class="para footnote">';
+            return "";
+        }
+
+        $this->cchunk["footnote"][$k]["str"] .= "</span>";
+        return "";
+    }
+    public function format_footnote_para_text($value, $tag) {
+        $k = count($this->cchunk["footnote"]) - 1;
+        $this->cchunk["footnote"][$k]["str"] .= $value;
+        return "";
+    }
+
+    /* }}} */
+
     public function format_co($open, $name, $attrs, $props) {
         if (($open || $props["empty"]) && isset($attrs[PhDReader::XMLNS_XML]["id"])) {
-            if(isset($this->tmp["co"])) {
-                ++$this->tmp["co"];
-            } else {
-                $this->tmp["co"] = 1;
-            }
-            return '<a name="'.$attrs[PhDReader::XMLNS_XML]["id"].'" id="'.$attrs[PhDReader::XMLNS_XML]["id"].'">' .str_repeat("*", $this->tmp["co"]) .'</a>';
+            $co = ++$this->cchunk["co"];
+            return '<a name="'.$attrs[PhDReader::XMLNS_XML]["id"].'" id="'.$attrs[PhDReader::XMLNS_XML]["id"].'">' .str_repeat("*", $co) .'</a>';
         }
         /* Suppress closing tag if any */
         return "";
     }
     public function format_calloutlist($open, $name, $attrs) {
         if ($open) {
-            $this->tmp["callouts"] = 0;
+            $this->cchunk["callouts"] = 0;
             return '<table>';
         }
         return '</table>';
     }
     public function format_callout($open, $name, $attrs) {
         if ($open) {
-            return '<tr><td><a href="#'.$attrs[PhDReader::XMLNS_DOCBOOK]["arearefs"].'">' .str_repeat("*", ++$this->tmp["callouts"]). '</a></td><td>';
+            return '<tr><td><a href="#'.$attrs[PhDReader::XMLNS_DOCBOOK]["arearefs"].'">' .str_repeat("*", ++$this->cchunk["callouts"]). '</a></td><td>';
         }
         return "</td></tr>\n";
     }
@@ -574,32 +787,32 @@ class XHTMLPhDFormat extends PhDFormat {
         return ")</span>";
     }
     public function format_segmentedlist($open, $name, $attrs) {
-        $this->tmp["segmentedlist"] = array("segtitle" => array());
+        $this->cchunk["segmentedlist"] = $this->dchunk["segmentedlist"];
         if ($open) {
             return '<div class="'.$name.'">';
         }
         return '</div>';
     }
     public function format_segtitle_text($value, $tag) {
-        $this->tmp["segmentedlist"]["segtitle"][count($this->tmp["segmentedlist"]["segtitle"])] = $value;
+        $this->cchunk["segmentedlist"]["segtitle"][count($this->cchunk["segmentedlist"]["segtitle"])] = $value;
         /* Suppress the text */
         return "";
     }
     public function format_seglistitem($open, $name, $attrs) {
         if ($open) {
-            $this->tmp["segmentedlist"]["seglistitem"] = 0;
+            $this->cchunk["segmentedlist"]["seglistitem"] = 0;
             return '<div class="'.$name.'">';
         }
         return '</div>';
     }
     public function format_seg($open, $name, $attrs) {
         if ($open) {
-            return '<div class="seg"><strong><span class="segtitle">' .$this->tmp["segmentedlist"]["segtitle"][$this->tmp["segmentedlist"]["seglistitem"]++]. ':</span></strong>';
+            return '<div class="seg"><strong><span class="segtitle">' .$this->cchunk["segmentedlist"]["segtitle"][$this->cchunk["segmentedlist"]["seglistitem"]++]. ':</span></strong>';
         }
         return '</div>';
     }
     public function format_procedure($open, $name, $attrs) {
-        $this->tmp["procedure"] = false;
+        $this->cchunk["procedure"] = false;
         if ($open) {
             return '<div class="'.$name.'">';
         }
@@ -608,8 +821,8 @@ class XHTMLPhDFormat extends PhDFormat {
     public function format_step($open, $name, $attrs) {
         if ($open) {
             $ret = "";
-            if (!$this->tmp["procedure"]) {
-                $this->tmp["procedure"] = true;
+            if ($this->cchunk["procedure"] === false) {
+                $this->cchunk["procedure"] = true;
                 $ret = '<ol type="1">';
             }
             return $ret . "<li>";
@@ -701,6 +914,21 @@ class XHTMLPhDFormat extends PhDFormat {
         }
         return "</div>";
     }
+    public function format_authorgroup_author($open, $name, $attrs, $props) {
+        if ($open) {
+            if ($props["sibling"] !== $name) {
+                return '<div class="'.$name.' vcard">' .$this->admonition_title("by", $props["lang"]). ':<br />';
+            }
+            return '<div class="'.$name.' vcard">';
+        }
+        return "</div>\n";
+    }
+    public function format_editor($open, $name, $attrs, $props) {
+        if ($open) {
+            return '<div class="editor vcard">' .$this->admonition_title("editedby", $props["lang"]). ': ';
+        }
+        return "</div>\n";
+    }
     public function format_note($open, $name, $attrs, $props) {
         if ($open) {
             return '<blockquote><p>'.$this->admonition_title("note", $props["lang"]). ': ';
@@ -740,27 +968,50 @@ class XHTMLPhDFormat extends PhDFormat {
     }
 
     public function format_mediaobject($open, $name, $attrs) {
-        $this->tmp["mediaobject"] = array();
+        $this->cchunk["mediaobject"] = $this->dchunk["mediaobject"];
         if ($open) {
             return '<div class="'.$name.'">';
         }
         return '</div>';
     }
     public function format_alt_text($value, $tag) {
-        $this->tmp["mediaobject"]["alt"] = $value;
+        $this->cchunk["mediaobject"]["alt"] = $value;
     }
     public function format_imagedata($open, $name, $attrs) {
-        if (isset($this->tmp["mediaobject"]["alt"])) {
-            return '<img src="' .$attrs[PhDReader::XMLNS_DOCBOOK]["fileref"]. '" alt="' .$this->tmp["mediaobject"]["alt"]. '" />';
+        if ($this->cchunk["mediaobject"]["alt"] !== false) {
+            return '<img src="' .$attrs[PhDReader::XMLNS_DOCBOOK]["fileref"]. '" alt="' .$this->cchunk["mediaobject"]["alt"]. '" />';
         }
         return '<img src="' .$attrs[PhDReader::XMLNS_DOCBOOK]["fileref"]. '" />';
     }
 
-    public function format_table($open, $name, $attrs) {
+    public function format_table($open, $name, $attrs, $props) {
         if ($open) {
+            $this->cchunk["table"] = true;
             return '<table border="5">';
         }
-        return "</table>\n";
+        $this->cchunk["table"] = false;
+        $str = "";
+        if ($this->cchunk["tablefootnotes"]) {
+            $opts = array(PhDReader::XMLNS_DOCBOOK => array());
+
+            $str =  $this->format_tbody(true, "footnote", $opts, $props);
+            $str .= $this->format_row(true, "footnote", $opts, $props);
+            $str .= $this->format_entry(true, "footnote", $opts, $props+array("colspan" => $this->getColCount()));
+
+            foreach ($this->cchunk["tablefootnotes"] as $k => $noteid) {
+                $str .= '<div class="footnote">';
+                $str .= '<a name="fnid' .$noteid. '" href="#fn' .$noteid .'"><sup>[' .($k + 1). ']</sup></a>' .$this->cchunk["footnote"][$k]["str"] . "\n";
+                unset($this->cchunk["footnote"][$k]);
+                $str .= "</div>\n";
+
+            }
+            $str .= $this->format_entry(false, "footnote", $opts, $props);
+            $str .= $this->format_row(false, "footnote", $opts, $props);
+            $str .= $this->format_tbody(false, "footnote", $opts, $props);
+
+            $this->cchunk["tablefootnotes"] = $this->dchunk["tablefootnotes"];
+        }
+        return "$str</table>\n";
     }
     public function format_tgroup($open, $name, $attrs) {
         if ($open) {
@@ -803,7 +1054,7 @@ class XHTMLPhDFormat extends PhDFormat {
     public function format_tbody($open, $name, $attrs) {
         if ($open) {
             $valign = PhDFormat::valign($attrs[PhDReader::XMLNS_DOCBOOK]);
-            return '<tbody valign="' .$valign. '">';
+            return '<tbody valign="' .$valign. '" class="' .$name. '">';
         }
         return "</tbody>";
     }
@@ -815,7 +1066,7 @@ class XHTMLPhDFormat extends PhDFormat {
         }
         return "</tr>\n";
     }
-    public function format_th_entry($open, $name, $attrs = array()) {
+    public function format_th_entry($open, $name, $attrs) {
         if ($open) {
             $colspan = PhDFormat::colspan($attrs[PhDReader::XMLNS_DOCBOOK]);
             return '<th colspan="' .((int)$colspan). '">';
@@ -836,7 +1087,16 @@ class XHTMLPhDFormat extends PhDFormat {
                 }
             }
 
-            $colspan = PhDFormat::colspan($dbattrs);
+            /*
+             * "colspan" is *not* an standard prop, only used to overwrite the 
+             * colspan for <footnote>s in tables
+             */
+            if (isset($props["colspan"])) {
+                $colspan = $props["colspan"];
+            } else {
+                $colspan = PhDFormat::colspan($dbattrs);
+            }
+
             $rowspan = PhDFormat::rowspan($dbattrs);
             $moreattrs = self::parse_table_entry_attributes($dbattrs);
             return $retval. '<td colspan="' .((int)$colspan). '" rowspan="' .((int)$rowspan). '" ' .$moreattrs. '>';

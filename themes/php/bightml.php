@@ -5,7 +5,7 @@ require_once $ROOT . '/themes/php/phpdotnet.php';
 class bightml extends phpdotnet {
     public function __construct(array $IDs, $filename, $ext = "html") {
         parent::__construct($IDs, $filename, $ext, false);
-        $this->stream = fopen("bightml.html", "w");
+        $this->stream = fopen($GLOBALS['OPTIONS']['output_dir'] . "bightml.html", "w");
         self::header();
     }
     public function appendData($data, $isChunk) {
@@ -33,7 +33,7 @@ class bightml extends phpdotnet {
     }
     public function format_qandaset($open, $name, $attrs) {
         if ($open) {
-            $this->tmp["qandaentry"] = array();
+            $this->cchunk["qandaentry"] = array();
             $this->ostream = $this->stream;
             $this->stream = fopen("php://temp/maxmemory", "r+");
             return '';
