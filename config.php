@@ -381,3 +381,4 @@ $OPTIONS["acronyms_file"] = $OPTIONS["xml_root"]."/entities/acronyms.xml";
 * vim600: sw=4 ts=4 syntax=php et
 * vim<600: sw=4 ts=4
 */
+
