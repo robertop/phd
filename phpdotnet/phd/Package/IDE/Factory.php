@@ -10,6 +10,7 @@ class Package_IDE_Factory extends Format_Factory {
         'php'               => 'Package_IDE_PHP',
         'phpstub'           => 'Package_IDE_PHPStub',
         'sqlite'            => 'Package_IDE_SQLite',
+		'ctags'             => 'Package_IDE_CTags',
     );
 
     /**
