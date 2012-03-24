@@ -19,15 +19,45 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	private $currentClassInfo;
 	
 	/**
+	 * The captured constant info (constant name)
+	 */
+	private $currentDefineInfo;
+	
+	/**
 	 * Flag that will be set when the XML reader is parsing the classsynopsis tag.
-	 * This will help in  skipping over <classname> nodes that we dont want
+	 * This will help in skipping over <classname> nodes that we dont want
 	 */
 	private $inClassSynopsis;
 	
+	/**
+	 * Flag that will be set when the XML reader is parsing the ooclass tag.
+	 * This will help in determining if the class name is a baseclass or not
+	 */
 	private $inOOClass;
 	
+	/**
+	 * Flag that will be set when the XML reader is parsing the <modifier> tag.
+	 * This will help in determining if the class name is a baseclass or not
+	 */
 	private $inClassExtends;
 	
+	/**
+	 * Flag that will be set when the XML reader is parsing the <appendix> tag.
+	 * This will help in determining predefined constants
+	 */
+	private $inAppendix;
+	
+	/**
+	 * Flag that will be set when the XML reader is parsing the <varlistentry> tag.
+	 * This will help in determining predefined constants
+	 */
+	private $inVarlistEntry;
+
+	/**
+	 * Flag that will be set when the XML reader is parsing the <term> tag.
+	 * This will help in determining predefined constants
+	 */
+	private $inTerm;	
 	/**
 	 * Most exceptions don't have their  own <classsynopsisinfo> info, they are just 
 	 * documented in the method comments themselves; however  since multiple methods
@@ -44,6 +74,9 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$this->completedExceptions = array();
 		$this->inOOClass = FALSE;
 		$this->inClassExtends = FALSE;
+		$this->inAppendix = FALSE;
+		$this->inVarlistEntry = FALSE;
+		$this->inTerm = FALSE;
     }
 	
 	/**
@@ -71,11 +104,20 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	}
 	
 	public function STANDALONE($value) {
+		
+		// the nodes that contain class info
 		$this->elementmap['classsynopsisinfo'] = 'format_classsynopsisinfo';
 		$this->elementmap['ooclass'] = 'format_ooclass';
 		$this->textmap['classname'] = 'format_classname_text';
 		$this->textmap['modifier'] = 'format_modifier_text';
 		$this->textmap['interfacename'] = 'format_interfacename_text';
+		
+		// the nodes that contain constants [define()'s] info
+		$this->elementmap['appendix'] = 'format_appendix';
+		$this->elementmap['term'] = 'format_term';
+		$this->elementmap['varlistentry'] = 'format_varlistentry';
+		$this->textmap['constant'] = 'format_constant_text';
+		
 		parent::STANDALONE($value);
 	}
 	
@@ -144,12 +186,58 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	
 	private function renderClass() {
 		$name = $this->currentClassInfo['name'];
-		$extends = join(',', array_merge(array($this->currentClassInfo['extends']), $this->currentClassInfo['implements']));
+		$allBases = array();
+		if ($this->currentClassInfo['extends']) {
+			$allBases[] = $this->currentClassInfo['extends'];
+		}
+		if ($this->currentClassInfo['implements']) {
+			array_merge($allBases, $this->currentClassInfo['implements']);
+		}
+		$extends = join(',', $allBases);
 		$data = "{$name}\t \t/^class {$name}/;\"\tc\t";
 		if ($extends) {
 			$data .= 'i:' . $extends;
 		}
 		return $data;
+	}
+	
+	public function format_appendix($open, $name, $attrs, $props) {
+		$this->inAppendix = $open;
+	}
+	
+	public function format_varlistentry($open, $name, $attrs, $props) {
+		if (!$this->inAppendix) {
+			return;
+		}
+		$this->inVarlistEntry = $open;
+		if ($open) {
+			$this->currentDefineInfo = '';
+			return;
+		}
+		if ($this->currentDefineInfo) {
+			$data = $this->renderDefine();
+			
+			// guarantee only 1 newline
+			$data = trim($data);
+			fwrite($this->tagFile, $data);
+			fwrite($this->tagFile, "\n");$this->renderDefine();
+		}
+	}
+	
+	public function format_term($open, $name, $attrs, $props) {
+		$this->inTerm = $this->inVarlistEntry && $open;
+	}
+	
+	private function renderDefine() {			
+		$signature = "/^define('{$this->currentDefineInfo}', '')/;\"";
+		return $this->currentDefineInfo . "\t" . '' . "\t" . $signature . "\t" . 'd';
+	}
+	
+	public function format_constant_text($text, $node) {
+		if (!$this->inVarlistEntry || !$this->inTerm) {
+			return;
+		}
+		$this->currentDefineInfo = $text;
 	}
 	
 	/**
