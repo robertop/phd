@@ -23,12 +23,27 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	 * This will help in  skipping over <classname> nodes that we dont want
 	 */
 	private $inClassSynopsis;
+	
+	private $inOOClass;
+	
+	private $inClassExtends;
+	
+	/**
+	 * Most exceptions don't have their  own <classsynopsisinfo> info, they are just 
+	 * documented in the method comments themselves; however  since multiple methods
+	 * may throw the same type of exception we store the exceptions that have already 
+	 * been rendered so that the tags file does not contain duplicates.
+	 */
+	private $completedExceptions;
 
     public function __construct() {
         $this->registerFormatName('CTags');
         $this->setExt(Config::ext() === null ? ".php" : Config::ext());
 		$this->tagFile = NULL;
 		$this->inClassSynopsis = FALSE;
+		$this->completedExceptions = array();
+		$this->inOOClass = FALSE;
+		$this->inClassExtends = FALSE;
     }
 	
 	/**
@@ -40,7 +55,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$fileName = Config::output_dir() . strtolower($this->getFormatName()) . '/php.tags';
 		$this->tagFile = fopen($fileName, 'wb');
 		if (!$this->tagFile) {
-			 v("Output file '{$fileName}' cannot be opened for writing.", E_USER_ERROR);
+			v("Output file '{$fileName}' cannot be opened for writing.", E_USER_ERROR);
 		}
 	}
 	
@@ -56,10 +71,85 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	}
 	
 	public function STANDALONE($value) {
-		//$this->elementmap['phpdoc:classref'] = 'format_classref';
 		$this->elementmap['classsynopsisinfo'] = 'format_classsynopsisinfo';
+		$this->elementmap['ooclass'] = 'format_ooclass';
 		$this->textmap['classname'] = 'format_classname_text';
+		$this->textmap['modifier'] = 'format_modifier_text';
+		$this->textmap['interfacename'] = 'format_interfacename_text';
 		parent::STANDALONE($value);
+	}
+	
+	/**
+	 * captures the class name when traversing the classsynopsisinfo node
+	 */
+	public function format_classsynopsisinfo($open, $name, $attrs, $props) {
+		if ($open) {
+			$this->inClassSynopsis = TRUE;
+			// clear out any previous info whe the class tag is opened
+			$this->currentClassInfo = array(
+				'modifier' => '',
+				'name' => '',
+				'extends' => '',
+				'implements' => array()
+			);
+			return;
+		}
+		$this->inClassSynopsis = FALSE;
+		$this->inClassExtends = FALSE;
+		
+		// check for empty class names, dont add them to the tags file
+		if (!$this->currentClassInfo['name']) {
+			return;
+		}
+		$data = $this->renderClass();
+		
+		// guarantee only 1 newline
+		$data = trim($data);
+		fwrite($this->tagFile, $data);
+		fwrite($this->tagFile, "\n");
+	}
+	
+	public function format_ooclass($open, $name, $attrs, $props) {
+		if (!$this->inClassSynopsis) {
+			return;
+		}
+		$this->inOOClass = $open;
+	}
+	
+	public function format_classname_text($value, $tag) {
+		if (!$this->inClassSynopsis) {
+			return;
+		}
+		if ($this->inOOClass && $this->inClassExtends) {
+			$this->currentClassInfo['extends'] = $value;
+		}
+		else if ($this->inOOClass) {
+			$this->currentClassInfo['name'] = $value;
+		}
+	}
+	
+	public function format_modifier_text($value, $tag) {
+		if (!$this->inClassSynopsis) {
+			return;
+		}
+		$this->inClassExtends = strcasecmp($value, 'extends') == 0;
+	}
+	
+	public function format_interfacename_text($value, $tag) {
+		if (!$this->inClassSynopsis) {
+			return;
+		}
+		$this->currentClassInfo['implements'][] = $value;
+	}
+	
+	private function renderClass() {
+		$name = $this->currentClassInfo['name'];
+		$extends = join(',', array_merge(array($this->currentClassInfo['extends']), $this->currentClassInfo['implements']));
+		$data = "{$name}\t \t/^class {$name}/;\"\tc\t";
+		if ($extends) {
+			$data .= 'i:' . $extends;
+		}
+		return $data;
 	}
 	
 	/**
@@ -94,39 +184,6 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		fwrite($this->tagFile, $data);
 		fwrite($this->tagFile, "\n");
     }
-	
-	public function format_classsynopsisinfo($open, $name, $attrs, $props) {
-		if ($open) {
-			$this->inClassSynopsis = TRUE;
-			// clear out any previous info whe the class tag is opened
-			$this->currentClassInfo = array(
-				'modifier' => '',
-				'name' => '',
-				'extends' => array(),
-				'implements' => array()
-			);
-			return;
-		}
-		$this->inClassSynopsis = FALSE;
-		
-		// check for empty class names, dont add them to the tags file
-		if (!$this->currentClassInfo['name']) {
-			return;
-		}
-		$data = $this->renderClass();
-		
-		// guarantee only 1 newline
-		$data = trim($data);
-		fwrite($this->tagFile, $data);
-		fwrite($this->tagFile, "\n");
-	}
-	
-	public function format_classname_text($value, $tag) {
-		if (!$this->inClassSynopsis) {
-			return;
-		}
-		$this->currentClassInfo['name'] = $value;
-	}
 	
     private function renderFunction() {
 		$name = trim($this->function['name']);
@@ -178,16 +235,6 @@ class Package_IDE_CTags extends Package_IDE_Base {
 
         return implode(", ", $result);
     }
-	
-	private function renderClass() {
-		$name = $this->currentClassInfo['name'];
-		$extends = join(',', array_merge($this->currentClassInfo['extends'], $this->currentClassInfo['implements']));
-		$data = "{$name}\t \t/^class {$name}/;\"\tc\t";
-		if ($extends) {
-			$data .= 'i:' . $extends;
-		}
-		return $data;
-	}
 	
 	// will not use this because we want to render all functions in 1 file
 	public function parseFunction() {}
