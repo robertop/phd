@@ -5,6 +5,19 @@ namespace phpdotnet\phd;
 /**
  * This class will render a CTags file containing all of the classes, functions, defines that
  * come in PHP.
+ * 
+ * The following tag kinds will be generated:
+ * c   a class or interface it will have an extension field 'i' for the inheritance info (base class, interfaces implemented)
+ * f   a function or class method, a method will have an extension field 'class' that has the name of the class
+ *     the method is in.
+ * d   a predefined constant
+ * p   a class member variable. Will have an extension field 'class' that has the 
+ *     name of the class the property / constant is in
+ * k   a class constant. Will have an extension field 'class' that has the 
+ *     name of the class the property / constant is in
+ *
+ * Kinds p,k deviate from the kinds provided by the default ctags PHP implementation and will most likely
+ * not be accessible by most editors.
  */
 class Package_IDE_CTags extends Package_IDE_Base {
 
@@ -228,9 +241,23 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$this->inTerm = $this->inVarlistEntry && $open;
 	}
 	
-	private function renderDefine() {			
-		$signature = "/^define('{$this->currentDefineInfo}', '')/;\"";
-		return $this->currentDefineInfo . "\t" . '' . "\t" . $signature . "\t" . 'd';
+	private function renderDefine() {
+	
+		// class constants also commented using the constant tag, but they contain
+		// the scope resolution operator. output the proper tag based on
+		// whether the constant is a class constant or not.
+		$indexScopeResolution = stripos($this->currentDefineInfo, '::');
+		$className = '';
+		$defineName = $this->currentDefineInfo;
+		$signature = "/^define('{$defineName}', '')/;\"";
+		$tag = $defineName . "\t" . '' . "\t" . $signature . "\t" . 'd';
+		if ($indexScopeResolution !== FALSE) {
+			$className = substr($defineName, 0, $indexScopeResolution);
+			$defineName = substr($defineName, $indexScopeResolution + 2); // 2 = skip the'::'
+			$signature = "/^const {$defineName}/;\"";
+			$tag = $defineName . "\t" . '' . "\t" . $signature . "\t" . 'k' . "\tclass:" . $className;
+		}
+		return $tag;
 	}
 	
 	public function format_constant_text($text, $node) {
@@ -290,7 +317,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$returnType = $this->function['return']['type'];
         $str = $name . "\t" . $fileName . "\t" .  $signature . "\t";
 		if ($isMethod) {
-			$str .= 'kind:f';
+			$str .= 'f';
 			$str .= "\t";
 			$str .= 'class:';
 			$str .= $className;
