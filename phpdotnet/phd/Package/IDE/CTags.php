@@ -37,59 +37,29 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	private $currentDefineInfo;
 	
 	/**
-	 * Flag that will be set when the XML reader is parsing the classsynopsis tag.
-	 * This will help in skipping over <classname> nodes that we dont want
+	 * This will keep track of which nodes are currently being iterated through.
+	 * Each record in this map will have the XML tag name as its key and
+	 * the value is a boolean value where TRUE means that currently
+	 * the tag is open. For example, if 'classsynopsis' and 'classname'
+	 * tags are both set to TRUE it means that we are currently iterating
+	 * inside of a classname tag which is inside of a classsynopsis tag.
+	 * Using this map we can easily check that we are in a relevant
+	 * node in the hierachy.
 	 */
-	private $inClassSynopsis;
+	private $openNodes = array(
+		'classsynopsis' => FALSE,
+		'classname' => FALSE,
+		'ooclass' => FALSE,
+		'modifier' => FALSE,
+		'appendix' => FALSE,
+		'varlistentry' => FALSE,
+		'term' => FALSE
+	);
 	
-	/**
-	 * Flag that will be set when the XML reader is parsing the ooclass tag.
-	 * This will help in determining if the class name is a baseclass or not
-	 */
-	private $inOOClass;
-	
-	/**
-	 * Flag that will be set when the XML reader is parsing the <modifier> tag.
-	 * This will help in determining if the class name is a baseclass or not
-	 */
-	private $inClassExtends;
-	
-	/**
-	 * Flag that will be set when the XML reader is parsing the <appendix> tag.
-	 * This will help in determining predefined constants
-	 */
-	private $inAppendix;
-	
-	/**
-	 * Flag that will be set when the XML reader is parsing the <varlistentry> tag.
-	 * This will help in determining predefined constants
-	 */
-	private $inVarlistEntry;
-
-	/**
-	 * Flag that will be set when the XML reader is parsing the <term> tag.
-	 * This will help in determining predefined constants
-	 */
-	private $inTerm;	
-	/**
-	 * Most exceptions don't have their  own <classsynopsisinfo> info, they are just 
-	 * documented in the method comments themselves; however  since multiple methods
-	 * may throw the same type of exception we store the exceptions that have already 
-	 * been rendered so that the tags file does not contain duplicates.
-	 */
-	private $completedExceptions;
-
-    public function __construct() {
+	public function __construct() {
         $this->registerFormatName('CTags');
         $this->setExt(Config::ext() === null ? ".php" : Config::ext());
 		$this->tagFile = NULL;
-		$this->inClassSynopsis = FALSE;
-		$this->completedExceptions = array();
-		$this->inOOClass = FALSE;
-		$this->inClassExtends = FALSE;
-		$this->inAppendix = FALSE;
-		$this->inVarlistEntry = FALSE;
-		$this->inTerm = FALSE;
     }
 	
 	/**
@@ -103,6 +73,15 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		if (!$this->tagFile) {
 			v("Output file '{$fileName}' cannot be opened for writing.", E_USER_ERROR);
 		}
+		$this->openNodes = array(
+			'classsynopsisinfo' => FALSE,
+			'ooclass' => FALSE,
+			'classname' => FALSE,
+			'modifier' => FALSE,
+			'appendix' => FALSE,
+			'varlistentry' => FALSE,
+			'term' => FALSE
+		);
 	}
 	
 	/**
@@ -138,8 +117,10 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	 * captures the class name when traversing the classsynopsisinfo node
 	 */
 	public function format_classsynopsisinfo($open, $name, $attrs, $props) {
+		$this->openNode('classsynopsisinfo', $open);
+		$this->closeNodes('ooclass', 'classname', 'modifier');
 		if ($open) {
-			$this->inClassSynopsis = TRUE;
+
 			// clear out any previous info whe the class tag is opened
 			$this->currentClassInfo = array(
 				'modifier' => '',
@@ -149,8 +130,6 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			);
 			return;
 		}
-		$this->inClassSynopsis = FALSE;
-		$this->inClassExtends = FALSE;
 		
 		// check for empty class names, dont add them to the tags file
 		if (!$this->currentClassInfo['name']) {
@@ -165,33 +144,30 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	}
 	
 	public function format_ooclass($open, $name, $attrs, $props) {
-		if (!$this->inClassSynopsis) {
-			return;
-		}
-		$this->inOOClass = $open;
+		$this->openNode('ooclass', $open);
 	}
 	
 	public function format_classname_text($value, $tag) {
-		if (!$this->inClassSynopsis) {
+		if (!$this->areNodesOpen('classsynopsisinfo', 'ooclass')) {
 			return;
 		}
-		if ($this->inOOClass && $this->inClassExtends) {
+		if ($this->areNodesOpen('modifier')) {
 			$this->currentClassInfo['extends'] = $value;
 		}
-		else if ($this->inOOClass) {
+		else {
 			$this->currentClassInfo['name'] = $value;
 		}
 	}
 	
 	public function format_modifier_text($value, $tag) {
-		if (!$this->inClassSynopsis) {
+		if (!$this->areNodesOpen('classsynopsisinfo', 'ooclass')) {
 			return;
 		}
-		$this->inClassExtends = strcasecmp($value, 'extends') == 0;
+		$this->openNode('modifier', strcasecmp($value, 'extends') == 0);
 	}
 	
 	public function format_interfacename_text($value, $tag) {
-		if (!$this->inClassSynopsis) {
+		if (!$this->areNodesOpen('classsynopsisinfo', 'ooclass')) {
 			return;
 		}
 		$this->currentClassInfo['implements'][] = $value;
@@ -215,14 +191,15 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	}
 	
 	public function format_appendix($open, $name, $attrs, $props) {
-		$this->inAppendix = $open;
+		$this->openNode('appendix', $open);
+		$this->closeNodes('varlistentry', 'constant');
 	}
 	
 	public function format_varlistentry($open, $name, $attrs, $props) {
-		if (!$this->inAppendix) {
+		if (!$this->areNodesOpen('appendix')) {
 			return;
 		}
-		$this->inVarlistEntry = $open;
+		$this->openNode('varlistentry', $open);
 		if ($open) {
 			$this->currentDefineInfo = '';
 			return;
@@ -238,7 +215,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	}
 	
 	public function format_term($open, $name, $attrs, $props) {
-		$this->inTerm = $this->inVarlistEntry && $open;
+		$this->openNode('term', $open && $this->areNodesOpen('appendix', 'varlistentry'));
 	}
 	
 	private function renderDefine() {
@@ -261,7 +238,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	}
 	
 	public function format_constant_text($text, $node) {
-		if (!$this->inVarlistEntry || !$this->inTerm) {
+		if (!$this->areNodesOpen('appendix', 'varlistentry', 'term')) {
 			return;
 		}
 		$this->currentDefineInfo = $text;
@@ -350,6 +327,43 @@ class Package_IDE_CTags extends Package_IDE_Base {
 
         return implode(", ", $result);
     }
+	
+	/**
+	 * @param $nodes,... varargs of strings, one of each node to check
+	 * @return boolean TRUE if ALL of the given nodes are currently open
+	 */
+	private function areNodesOpen($nodes) {
+		$nodes = func_get_args();
+		$allOpen = count($nodes);
+		foreach ($nodes as $node) {
+			$allOpen = $this->openNodes[$node];
+			if (!$allOpen) {
+				break;
+			}
+		}
+		return $allOpen;
+	}
+	
+	/**
+	 * sets the open flag to FALSE on all of the given nodes
+	 *
+	 * @param $nodes,... varargs of strings, one of each node to close
+	 */
+	private function closeNodes($nodes) {
+		$nodes = func_get_args();
+		foreach ($nodes as $node) {
+			$this->openNodes[$node] = FALSE;
+		}
+	}
+	
+	/**
+	 * sets the open flag on all of the given nodes
+	 * @param $node string nodename to set as open
+	 * @param $flag TRUE of FALSE  the value to set the open flag to
+	 */
+	private function openNode($node, $isOpen) {
+		$this->openNodes[$node] = $isOpen;
+	}
 	
 	// will not use this because we want to render all functions in 1 file
 	public function parseFunction() {}
