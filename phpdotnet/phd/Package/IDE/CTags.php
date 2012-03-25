@@ -37,6 +37,11 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	private $currentDefineInfo;
 	
 	/**
+	 * The captured info for a class member variable
+	 */
+	private $currentPropertyInfo;
+	
+	/**
 	 * This will keep track of which nodes are currently being iterated through.
 	 * Each record in this map will have the XML tag name as its key and
 	 * the value is a boolean value where TRUE means that currently
@@ -47,13 +52,22 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	 * node in the hierachy.
 	 */
 	private $openNodes = array(
+	
+		// tags that hold classes
 		'classsynopsis' => FALSE,
 		'classname' => FALSE,
 		'ooclass' => FALSE,
 		'modifier' => FALSE,
+		
+		// tags that hold constants
 		'appendix' => FALSE,
 		'varlistentry' => FALSE,
-		'term' => FALSE
+		'term' => FALSE,
+		
+		// tags that hold class variables (properties)
+		'section' => FALSE,
+		'variablelist' => FALSE,
+		
 	);
 	
 	public function __construct() {
@@ -80,7 +94,9 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			'modifier' => FALSE,
 			'appendix' => FALSE,
 			'varlistentry' => FALSE,
-			'term' => FALSE
+			'term' => FALSE,
+			'section' => FALSE,
+			'variablelist' => FALSE
 		);
 	}
 	
@@ -110,6 +126,11 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$this->elementmap['varlistentry'] = 'format_varlistentry';
 		$this->textmap['constant'] = 'format_constant_text';
 		
+		// nodes that contain class properties
+		$this->elementmap['section'] = 'format_section';
+		$this->elementmap['variablelist'] = 'format_variablelist';
+		$this->textmap['varname'] = 'format_varname_text';
+		
 		parent::STANDALONE($value);
 	}
 	
@@ -119,20 +140,25 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	public function format_classsynopsisinfo($open, $name, $attrs, $props) {
 		$this->openNode('classsynopsisinfo', $open);
 		$this->closeNodes('ooclass', 'classname', 'modifier');
-		if ($open) {
-
-			// clear out any previous info whe the class tag is opened
-			$this->currentClassInfo = array(
-				'modifier' => '',
-				'name' => '',
-				'extends' => '',
-				'implements' => array()
-			);
+		$hasRole = isset($attrs[Reader::XMLNS_DOCBOOK]['role']) && strlen($attrs[Reader::XMLNS_DOCBOOK]['role']) > 0;
+		if ($open) {			
+			if (!$hasRole) { 
+			
+				// clear out any previous info whe the class tag is opened
+				// but only clear it in the class tag and not the comment sections
+				// because the property tags need the class name
+				$this->currentClassInfo = array(
+					'modifier' => '',
+					'name' => '',
+					'extends' => '',
+					'implements' => array()
+				);
+			}
 			return;
 		}
 		
-		// check for empty class names, dont add them to the tags file
-		if (!$this->currentClassInfo['name']) {
+		// only handle the classsynopsisinfo tag that does not have a role
+		if ($hasRole) {
 			return;
 		}
 		$data = $this->renderClass();
@@ -192,30 +218,48 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	
 	public function format_appendix($open, $name, $attrs, $props) {
 		$this->openNode('appendix', $open);
-		$this->closeNodes('varlistentry', 'constant');
+		$this->closeNodes('varlistentry', 'term');
 	}
 	
 	public function format_varlistentry($open, $name, $attrs, $props) {
-		if (!$this->areNodesOpen('appendix')) {
+		if (!$this->areNodesOpen('appendix', 'variablelist') && !$this->areNodesOpen('section', 'variablelist')) {
 			return;
 		}
 		$this->openNode('varlistentry', $open);
 		if ($open) {
 			$this->currentDefineInfo = '';
+			$this->currentPropertyInfo = '';
 			return;
 		}
-		if ($this->currentDefineInfo) {
+		 
+		if ($this->currentDefineInfo && $this->areNodesOpen('appendix')) {
 			$data = $this->renderDefine();
 			
 			// guarantee only 1 newline
 			$data = trim($data);
 			fwrite($this->tagFile, $data);
-			fwrite($this->tagFile, "\n");$this->renderDefine();
+			fwrite($this->tagFile, "\n");
+		}
+		else if ($this->areNodesOpen('section')) {
+			$data = $this->renderProperty();
+			
+			// guarantee only 1 newline
+			$data = trim($data);
+			fwrite($this->tagFile, $data);
+			fwrite($this->tagFile, "\n");
 		}
 	}
 	
 	public function format_term($open, $name, $attrs, $props) {
-		$this->openNode('term', $open && $this->areNodesOpen('appendix', 'varlistentry'));
+		$this->openNode('term', $open);
+	}
+	
+	public function format_constant_text($text, $node) {
+		if (!$this->areNodesOpen('appendix', 'varlistentry', 'term')) {
+			v("appendix open? " . $this->openNodes['appendix'] . ' ' . $this->openNodes['varlistentry'] . ' ' . $this->openNodes['term'], VERBOSE_INFO);
+			return;
+		}
+		$this->currentDefineInfo = $text;
 	}
 	
 	private function renderDefine() {
@@ -237,11 +281,30 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		return $tag;
 	}
 	
-	public function format_constant_text($text, $node) {
-		if (!$this->areNodesOpen('appendix', 'varlistentry', 'term')) {
+	public function format_section($open, $name, $attrs, $props) {
+		$this->openNode('section', $open && 
+			isset($attrs[Reader::XMLNS_XML]) && 
+			isset($attrs[Reader::XMLNS_XML]['id']) && 
+			substr($attrs[Reader::XMLNS_XML]['id'], -6) == '.props');
+	}
+	
+	public function format_variablelist($open, $name, $attrs, $props) {
+		$this->openNode('variablelist', $open);
+	}
+	
+	public function format_varname_text($text, $node) {
+		if (!$this->areNodesOpen('section', 'variablelist', 'varlistentry')) {
 			return;
 		}
-		$this->currentDefineInfo = $text;
+		$this->currentPropertyInfo = $text;
+	}
+	
+	private function renderProperty() {
+		$className = $this->currentClassInfo['name'];
+		$propertyName = $this->currentPropertyInfo;
+		$signature = '/^$' . $propertyName . '/;"';
+		$tag = $propertyName . "\t" . '' . "\t" . $signature. "\t" . 'p' . "\t" . 'class:' . $className;
+		return $tag;
 	}
 	
 	/**
@@ -332,14 +395,14 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	 * @param $nodes,... varargs of strings, one of each node to check
 	 * @return boolean TRUE if ALL of the given nodes are currently open
 	 */
-	private function areNodesOpen($nodes) {
+	private function areNodesOpen() {
 		$nodes = func_get_args();
-		$allOpen = count($nodes);
+		$allOpen = count($nodes) > 0;
 		foreach ($nodes as $node) {
-			$allOpen = $this->openNodes[$node];
 			if (!$allOpen) {
 				break;
 			}
+			$allOpen = $this->openNodes[$node];
 		}
 		return $allOpen;
 	}
