@@ -277,7 +277,9 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			array_merge($allBases, $this->currentClassInfo['implements']);
 		}
 		$extends = join(',', $allBases);
-		$data = "{$name}\t \t/^class {$name}/;\"\tc\t";
+		$file = '';
+		$exCmd = '0;"';
+		$data = "{$name}\t{$file}\t{$exCmd}\tc\t";
 		if ($extends) {
 			$data .= 'i:' . $extends;
 		}
@@ -328,13 +330,13 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$indexScopeResolution = stripos($this->currentDefineInfo, '::');
 		$className = '';
 		$defineName = $this->currentDefineInfo;
-		$signature = "/^define('{$defineName}', '')/;\"";
-		$tag = $defineName . "\t" . '' . "\t" . $signature . "\t" . 'd';
+		$file = '';
+		$exCmd = '0;"';
+		$tag = "{$defineName}\t{$file}\t{$exCmd}\td";
 		if ($indexScopeResolution !== FALSE) {
 			$className = substr($defineName, 0, $indexScopeResolution);
 			$defineName = substr($defineName, $indexScopeResolution + 2); // 2 = skip the'::'
-			$signature = "/^const {$defineName}/;\"";
-			$tag = $defineName . "\t" . '' . "\t" . $signature . "\t" . 'o' . "\tclass:" . $className;
+			$tag = "{$defineName}\t{$file}\t{$exCmd}\to\tclass:{$className}";
 		}
 		return $tag;
 	}
@@ -369,8 +371,9 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	private function renderProperty() {
 		$className = $this->currentClassInfo['name'];
 		$propertyName = $this->currentPropertyInfo['name'];
-		$signature = '/^$' . $propertyName . '/;"';
-		$tag = $propertyName . "\t" . '' . "\t" . $signature. "\t" . 'p' . "\t" . 'class:' . $className;
+		$file = '';
+		$exCmd = '0;"';
+		$tag = "{$propertyName}\t{$file}\t{$exCmd}\tp\tclass:{$className}";
 		$access = array();
 		if ($this->currentPropertyInfo['protected']) {
 			$access[] = 'protected';
@@ -382,7 +385,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			$access[] = 'final';
 		}
 		if ($access) {
-			$tag .= "\t" . 'a:' . join(',', $access);
+			$tag .= "\ta:" . join(',', $access);
 		}
 		return $tag;
 	}
@@ -444,12 +447,12 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			$className = substr($name, 0, $dotIndex);
 			$name = substr($name, $dotIndex + 1);
 		}
-		$fileName = '';
+		$file = '';
+		$exCmd = '0;"';
 		$signature = $this->renderFunctionDefinition($name);
 		$returnType = $this->function['return']['type'];
-        $str = $name . "\t" . $fileName . "\t" .  $signature . "\t";
+        $str = "{$name}\t{$file}\t{$exCmd}\tf\tS:{$returnType} {$signature}";
 		if ($isMethod) {
-			$str .= 'f';
 			$str .= "\t";
 			$str .= 'class:';
 			$str .= $className;
@@ -473,20 +476,12 @@ class Package_IDE_CTags extends Package_IDE_Base {
 				}
 			}
 		}
-		else {
-			$str .= 'f';
-		}
 		return $str;
     }	
 
     private function renderFunctionDefinition($functionName) {
-	
-		// surround the signature with the VIM 'magic'
-		// also use TAG file format 2 (add a VIM comment at the end)
         return  
-			"/^" . 
-			"function {$functionName}({$this->renderParamBody()})" . 
-			"/;\"";
+			"function {$functionName}({$this->renderParamBody()})";
     }
 	
     private function renderParamBody() {
