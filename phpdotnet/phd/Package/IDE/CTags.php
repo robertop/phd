@@ -7,17 +7,34 @@ namespace phpdotnet\phd;
  * come in PHP.
  * 
  * The following tag kinds will be generated:
- * c   a class or interface it will have an extension field 'i' for the inheritance info (base class, interfaces implemented)
- * f   a function or class method, a method will have an extension field 'class' that has the name of the class
- *     the method is in.
- * d   a predefined constant
- * p   a class member variable. Will have an extension field 'class' that has the 
- *     name of the class the property / constant is in
- * k   a class constant. Will have an extension field 'class' that has the 
- *     name of the class the property / constant is in
+ * c   a class or interface tag
+ *     It may have extension field 'i' for the inheritance info (base class, interfaces implemented)
+ *     It may have extension field 'a' that will hold the 'final' if class is final
+ *     It may have extension field 'm' that will hold the 'abstract' if class is abstract
+ * f   a function or class method tag
+ *     It may have extension field 'class' that has the name of the class the method is in (method tags only)
+ *     It may have extension field 'S' that will have the function's signature. The return type of a method will be
+ *     the first word in the signature , for example
+ *     string function substr($string, $start, $length)    <-- for a function
+ *     string function method($arg1, $arg2)                <-- for a method, it will NOT have any modifiers (private, static,...)
+ *
+ *     It may have extension field 'a' that will hold the 'static', 'private', or 'protected' or 'final' modifiers (none means public)
+ *     It may have extension field 'm' that will hold the 'abstract' if method is abstract
+ * d   a predefined constant tag 
+ * p   a class member variable tag 
+ *     It will have extension field 'class' that has the name of the class the property is in
+ *     It may have extension field 'a' that will hold the 'static', 'private', or 'protected' or 'final' modifiers (none means public)
+ * o   a class constant tag 
+ *     It will have extension field 'class' that has the name of the class the constant is in
  *
  * Kinds p,k deviate from the kinds provided by the default ctags PHP implementation and will most likely
  * not be accessible by most editors.
+ *
+ * None of the tags will have an ex_cmd (or rather a "0" will be put in its place), since there is no source 
+ * file that can be jumped to.
+ *
+ * None of the tags will have a file name (empty strign) since there is no source file that can be jumped to.
+ *
  */
 class Package_IDE_CTags extends Package_IDE_Base {
 
@@ -37,24 +54,40 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	private $currentDefineInfo;
 	
 	/**
-	 * The captured info for a class member variable
+	 * The captured info for a class member variable.
 	 */
 	private $currentPropertyInfo;
+	
+	/**
+	 * The modifiers for a function (protected, static, final). we capture these here because
+	 * the base class does not.
+	 * This works a bit different than property modifiers, this array will be a map
+	 * of all modifiers of all methods of a class. For example:
+	 * array('getMessage' => array('protected', 'final'), 'getCode' => array('protected', 'final'))
+	 */
+	private $functionModifiers;
+	
+	/**
+	 * we want to capture both function name and the modifiers; since they are in adjacent tags
+	 * we need to the modifiers when we see a modifier, the save it into the funcitonModifiers list
+	 * once we read the function name node.
+	 */
+	private $currentFunctionModifiers;
 	
 	/**
 	 * This will keep track of which nodes are currently being iterated through.
 	 * Each record in this map will have the XML tag name as its key and
 	 * the value is a boolean value where TRUE means that currently
-	 * the tag is open. For example, if 'classsynopsis' and 'classname'
+	 * the tag is open. For example, if 'classsynopsisinfo' and 'classname'
 	 * tags are both set to TRUE it means that we are currently iterating
-	 * inside of a classname tag which is inside of a classsynopsis tag.
+	 * inside of a classname tag which is inside of a classsynopsisinfo tag.
 	 * Using this map we can easily check that we are in a relevant
 	 * node in the hierachy.
 	 */
 	private $openNodes = array(
 	
 		// tags that hold classes
-		'classsynopsis' => FALSE,
+		'classsynopsisinfo' => FALSE,
 		'classname' => FALSE,
 		'ooclass' => FALSE,
 		'modifier' => FALSE,
@@ -65,8 +98,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		'term' => FALSE,
 		
 		// tags that hold class variables (properties)
-		'section' => FALSE,
-		'variablelist' => FALSE,
+		'fieldsynopsis' => FALSE
 		
 	);
 	
@@ -89,14 +121,13 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		}
 		$this->openNodes = array(
 			'classsynopsisinfo' => FALSE,
-			'ooclass' => FALSE,
 			'classname' => FALSE,
+			'ooclass' => FALSE,
 			'modifier' => FALSE,
 			'appendix' => FALSE,
 			'varlistentry' => FALSE,
 			'term' => FALSE,
-			'section' => FALSE,
-			'variablelist' => FALSE
+			'fieldsynopsis' => FALSE
 		);
 	}
 	
@@ -121,15 +152,33 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$this->textmap['interfacename'] = 'format_interfacename_text';
 		
 		// the nodes that contain constants [define()'s] info
+		// 
+		// <appendix xmlns="http://docbook.org/ns/docbook" xml:id="id3.constants">
+		// <title>Predefined Constants</title>
+		// <para>
+		//  ...
+		// <variablelist>
+		// <varlistentry xml:id="constant.id3-v1-0">
+		// <term> <constant>ID3_V1_0</constant> (<type>integer</type>) </term>
+		// ...
+		// </varlistentry>
 		$this->elementmap['appendix'] = 'format_appendix';
 		$this->elementmap['term'] = 'format_term';
 		$this->elementmap['varlistentry'] = 'format_varlistentry';
 		$this->textmap['constant'] = 'format_constant_text';
 		
-		// nodes that contain class properties
-		$this->elementmap['section'] = 'format_section';
-		$this->elementmap['variablelist'] = 'format_variablelist';
+		// nodes that contain class properties. note: modifier tag already handled above
+		// <fieldsynopsis>
+		// <modifier>protected</modifier>
+		// <type>string</type>
+		// <varname linkend="exception.props.message">message</varname>
+		// </fieldsynopsis>
+		$this->elementmap['fieldsynopsis'] = 'format_fieldsynopsis';
 		$this->textmap['varname'] = 'format_varname_text';
+		
+		// the method modifiers
+		$this->elementmap['methodsynopsis'] = 'format_methodsynopsis';
+		$this->textmap['methodname'] = 'format_methodname_text';
 		
 		parent::STANDALONE($value);
 	}
@@ -153,6 +202,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 					'extends' => '',
 					'implements' => array()
 				);
+				$this->functionModifiers = array();
 			}
 			return;
 		}
@@ -186,10 +236,28 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	}
 	
 	public function format_modifier_text($value, $tag) {
-		if (!$this->areNodesOpen('classsynopsisinfo', 'ooclass')) {
+		if (!$this->areNodesOpen('classsynopsisinfo', 'ooclass') && !$this->areNodesOpen('fieldsynopsis') && !$this->areNodesOpen('methodsynopsis')) {
 			return;
 		}
-		$this->openNode('modifier', strcasecmp($value, 'extends') == 0);
+		if ($this->areNodesOpen('classsynopsisinfo', 'ooclass')) {
+			$this->openNode('modifier', strcasecmp($value, 'extends') == 0);
+		}
+		else if ($this->areNodesOpen('fieldsynopsis')) {
+			if (strcasecmp($value, 'protected') == 0) {
+				$this->currentPropertyInfo['protected'] = TRUE;
+			}
+			else if (strcasecmp($value, 'static') == 0) {
+				$this->currentPropertyInfo['static'] = TRUE;
+			}
+			else if (strcasecmp($value, 'final') == 0) {
+				$this->currentPropertyInfo['final'] = TRUE;
+			}
+		}
+		else if ($this->areNodesOpen('methodsynopsis') && strcasecmp($value, 'public') != 0) {
+		
+			// everything is public by default, no need to show it in the tag file.
+			$this->currentFunctionModifiers[] =  $value;
+		}
 	}
 	
 	public function format_interfacename_text($value, $tag) {
@@ -222,26 +290,17 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	}
 	
 	public function format_varlistentry($open, $name, $attrs, $props) {
-		if (!$this->areNodesOpen('appendix', 'variablelist') && !$this->areNodesOpen('section', 'variablelist')) {
+		if (!$this->areNodesOpen('appendix')) {
 			return;
 		}
 		$this->openNode('varlistentry', $open);
 		if ($open) {
 			$this->currentDefineInfo = '';
-			$this->currentPropertyInfo = '';
 			return;
 		}
 		 
-		if ($this->currentDefineInfo && $this->areNodesOpen('appendix')) {
+		if ($this->currentDefineInfo) {
 			$data = $this->renderDefine();
-			
-			// guarantee only 1 newline
-			$data = trim($data);
-			fwrite($this->tagFile, $data);
-			fwrite($this->tagFile, "\n");
-		}
-		else if ($this->areNodesOpen('section')) {
-			$data = $this->renderProperty();
 			
 			// guarantee only 1 newline
 			$data = trim($data);
@@ -256,7 +315,6 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	
 	public function format_constant_text($text, $node) {
 		if (!$this->areNodesOpen('appendix', 'varlistentry', 'term')) {
-			v("appendix open? " . $this->openNodes['appendix'] . ' ' . $this->openNodes['varlistentry'] . ' ' . $this->openNodes['term'], VERBOSE_INFO);
 			return;
 		}
 		$this->currentDefineInfo = $text;
@@ -276,34 +334,56 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			$className = substr($defineName, 0, $indexScopeResolution);
 			$defineName = substr($defineName, $indexScopeResolution + 2); // 2 = skip the'::'
 			$signature = "/^const {$defineName}/;\"";
-			$tag = $defineName . "\t" . '' . "\t" . $signature . "\t" . 'k' . "\tclass:" . $className;
+			$tag = $defineName . "\t" . '' . "\t" . $signature . "\t" . 'o' . "\tclass:" . $className;
 		}
 		return $tag;
 	}
 	
-	public function format_section($open, $name, $attrs, $props) {
-		$this->openNode('section', $open && 
-			isset($attrs[Reader::XMLNS_XML]) && 
-			isset($attrs[Reader::XMLNS_XML]['id']) && 
-			substr($attrs[Reader::XMLNS_XML]['id'], -6) == '.props');
-	}
-	
-	public function format_variablelist($open, $name, $attrs, $props) {
-		$this->openNode('variablelist', $open);
-	}
-	
 	public function format_varname_text($text, $node) {
-		if (!$this->areNodesOpen('section', 'variablelist', 'varlistentry')) {
+		if (!$this->areNodesOpen('fieldsynopsis')) {
 			return;
 		}
-		$this->currentPropertyInfo = $text;
+		$this->currentPropertyInfo['name'] = $text;
+	}
+	
+	public function format_fieldsynopsis($open, $name, $attrs, $props) {
+		$this->openNode('fieldsynopsis', $open);
+		if ($open) {
+			$this->currentPropertyInfo = array(
+				'name' => '',
+				'protected' => FALSE,
+				'static' => FALSE,
+				'final' => FALSE
+			);
+		}
+		else {
+			$data = $this->renderProperty();
+			
+			// guarantee only 1 newline
+			$data = trim($data);
+			fwrite($this->tagFile, $data);
+			fwrite($this->tagFile, "\n");
+		}
 	}
 	
 	private function renderProperty() {
 		$className = $this->currentClassInfo['name'];
-		$propertyName = $this->currentPropertyInfo;
+		$propertyName = $this->currentPropertyInfo['name'];
 		$signature = '/^$' . $propertyName . '/;"';
 		$tag = $propertyName . "\t" . '' . "\t" . $signature. "\t" . 'p' . "\t" . 'class:' . $className;
+		$access = array();
+		if ($this->currentPropertyInfo['protected']) {
+			$access[] = 'protected';
+		}
+		if ($this->currentPropertyInfo['static']) {
+			$access[] = 'static';
+		}
+		if ($this->currentPropertyInfo['final']) {
+			$access[] = 'final';
+		}
+		if ($access) {
+			$tag .= "\t" . 'a:' . join(',', $access);
+		}
 		return $tag;
 	}
 	
@@ -320,6 +400,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
         if ($open) {
             $this->function = $this->dfunction;
             $this->cchunk = $this->dchunk;
+			$this->currentFunctionModifiers = array();
 
             $this->function['manualid'] =  $attrs[Reader::XMLNS_XML]['id'];
             return;
@@ -340,6 +421,17 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		fwrite($this->tagFile, "\n");
     }
 	
+	public function format_methodsynopsis($open, $name, $attrs, $props) {
+		$this->openNode('methodsynopsis', $open);
+	}
+	
+	public function format_methodname_text($text, $node) {
+		if (!$this->areNodesOpen('methodsynopsis')) {
+			return;
+		}
+		$this->functionModifiers[$this->toValidName($text)] = $this->currentFunctionModifiers;
+	}
+	
     private function renderFunction() {
 		$name = trim($this->function['name']);
 		$isMethod = FALSE;
@@ -347,7 +439,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$dotIndex = stripos($name, '.');
 		if ($dotIndex !== FALSE) {
 		
-			// this is a method. parse the class name out of ir
+			// this is a method. parse the class name out of it
 			$isMethod = TRUE;
 			$className = substr($name, 0, $dotIndex);
 			$name = substr($name, $dotIndex + 1);
@@ -361,6 +453,25 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			$str .= "\t";
 			$str .= 'class:';
 			$str .= $className;
+			
+			// map is indexed by full method name (class '.' method)
+			$allModifiers = isset($this->functionModifiers[$this->function['name']]) ? $this->functionModifiers[$this->function['name']] : NULL;
+			if ($allModifiers) {
+				$accessModifiers = $allModifiers;
+				$index = array_search('abstract', $accessModifiers);
+				if ($index !== FALSE) {
+					unset($accessModifiers[$index]);
+				}
+				if ($accessModifiers) {
+					$str .= "\t";
+					$str .= 'a:';
+					$str .= join(',', $accessModifiers);
+				}
+				if ($index !== FALSE) {
+					$str .= "\t";
+					$str .= 'm: abstract';
+				}
+			}
 		}
 		else {
 			$str .= 'f';
