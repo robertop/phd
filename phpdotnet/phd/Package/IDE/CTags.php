@@ -98,7 +98,11 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		'term' => FALSE,
 		
 		// tags that hold class variables (properties)
-		'fieldsynopsis' => FALSE
+		'fieldsynopsis' => FALSE,
+		
+		// tags that hold the predefined variables
+		'varentry' => FALSE,
+		'simplelist' => FALSE
 		
 	);
 	
@@ -120,6 +124,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			v("Output file '{$fileName}' cannot be opened for writing.", E_USER_ERROR);
 		}
 		$this->openNodes = array(
+			'part' => FALSE,
 			'classsynopsisinfo' => FALSE,
 			'classname' => FALSE,
 			'ooclass' => FALSE,
@@ -127,8 +132,11 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			'appendix' => FALSE,
 			'varlistentry' => FALSE,
 			'term' => FALSE,
-			'fieldsynopsis' => FALSE
+			'fieldsynopsis' => FALSE,
+			'varentry' => FALSE,
+			'simplelist' => FALSE
 		);
+		
 		$header = <<<EOF
 !_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
 !_TAG_FILE_SORTED	0	/0=unsorted, 1=sorted, 2=foldcase/
@@ -191,6 +199,13 @@ EOF;
 		// the method modifiers
 		$this->elementmap['methodsynopsis'] = 'format_methodsynopsis';
 		$this->textmap['methodname'] = 'format_methodname_text';
+		
+		// for predefined exceptions
+		$this->elementmap['part'] = 'format_part';
+		
+		// for predefined variables
+		$this->elementmap['phpdoc:varentry'] = 'format_varentry';
+		$this->elementmap['simplelist'] = 'format_simplelist';
 		
 		parent::STANDALONE($value);
 	}
@@ -344,10 +359,15 @@ EOF;
 	}
 	
 	public function format_varname_text($text, $node) {
-		if (!$this->areNodesOpen('fieldsynopsis')) {
+		if (!$this->areNodesOpen('fieldsynopsis') && !$this->areNodesOpen('varentry', 'simplelist')) {
 			return;
 		}
-		$this->currentPropertyInfo['name'] = $text;
+		if ($this->areNodesOpen('fieldsynopsis')) {
+			$this->currentPropertyInfo['name'] = $text;
+		}
+		else if ($this->areNodesOpen('varentry', 'simplelist')) {
+			$this->writeTag($this->renderVariable($text));
+		}
 	}
 	
 	public function format_fieldsynopsis($open, $name, $attrs, $props) {
@@ -488,6 +508,33 @@ EOF;
 
         return implode(", ", $result);
     }
+	
+	public function format_part($open, $name, $attrs, $opts) {
+	
+		/**
+		 * Predfined exceptions (Exception, ErrorException) are documented outside of the 
+		 * function reference. When looking for functions, we must look in the predefined
+		 * exceptions part of the manual.
+		 * Set the flag so that the base class collects function info
+		 */
+		if (isset($attrs[Reader::XMLNS_XML]['id']) && $attrs[Reader::XMLNS_XML]['id'] == 'reserved.exceptions') {
+			$this->isFunctionRefSet = $open;
+		}
+	}
+	
+	public function format_varentry($open, $name, $attrs, $opts) {
+		$this->openNode('varentry', $open && isset($attrs[Reader::XMLNS_XML]['id']) && $attrs[Reader::XMLNS_XML]['id'] == 'language.variables.superglobals');
+	}
+	
+	public function format_simplelist($open, $name, $attrs, $opts) {
+		$this->openNode('simplelist', $open);
+	}
+	
+	private function renderVariable($varName) {
+		$file = '';
+		$exCmd = '0;"';
+		return "{$varName}\t{$file}\t{$exCmd}\tv";
+	}
 	
 	/**
 	 * @param $nodes,... varargs of strings, one of each node to check
