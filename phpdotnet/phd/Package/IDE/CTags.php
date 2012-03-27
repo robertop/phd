@@ -129,6 +129,18 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			'term' => FALSE,
 			'fieldsynopsis' => FALSE
 		);
+		$header = <<<EOF
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	0	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Roberto Perpuly	/roberto@mvceditor.com/
+!_TAG_PROGRAM_NAME	PhD - PHP DocBook	//
+!_TAG_PROGRAM_URL	http://doc.php.net/phd/	/official site/
+!_TAG_PROGRAM_VERSION	1.1.3 forked see https://github.com/robertop/phd	//
+EOF;
+		if ($this->tagFile) {
+			 fwrite($this->tagFile, $header);
+			 fwrite($this->tagFile, "\n");
+		}
 	}
 	
 	/**
@@ -211,12 +223,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		if ($hasRole) {
 			return;
 		}
-		$data = $this->renderClass();
-		
-		// guarantee only 1 newline
-		$data = trim($data);
-		fwrite($this->tagFile, $data);
-		fwrite($this->tagFile, "\n");
+		$this->writeTag($this->renderClass());
 	}
 	
 	public function format_ooclass($open, $name, $attrs, $props) {
@@ -302,12 +309,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		}
 		 
 		if ($this->currentDefineInfo) {
-			$data = $this->renderDefine();
-			
-			// guarantee only 1 newline
-			$data = trim($data);
-			fwrite($this->tagFile, $data);
-			fwrite($this->tagFile, "\n");
+			$this->writeTag($this->renderDefine());
 		}
 	}
 	
@@ -359,12 +361,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			);
 		}
 		else {
-			$data = $this->renderProperty();
-			
-			// guarantee only 1 newline
-			$data = trim($data);
-			fwrite($this->tagFile, $data);
-			fwrite($this->tagFile, "\n");
+			$this->writeTag($this->renderProperty());
 		}
 	}
 	
@@ -416,12 +413,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
         }
         $this->function['name'] = $this->cchunk['funcname'][0];
         $this->function['version'] = $this->versionInfo($this->function['name']);
-        $data = $this->renderFunction();
-		
-		// guarantee only 1 newline
-		$data = trim($data);
-		fwrite($this->tagFile, $data);
-		fwrite($this->tagFile, "\n");
+        $this->writeTag($this->renderFunction());
     }
 	
 	public function format_methodsynopsis($open, $name, $attrs, $props) {
@@ -536,6 +528,16 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	
 	// will not use this because we want to render all functions in 1 file
 	public function parseFunction() {}
+	
+	private function writeTag($tag) {
+		if ($this->tagFile) {
+		
+			// guarantee only 1 newline
+			$tag = trim($tag);
+			fwrite($this->tagFile, $tag);
+			fwrite($this->tagFile, "\n");
+		}
+	}
 }
 
 /*
