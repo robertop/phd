@@ -140,7 +140,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		$header = <<<EOF
 !_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
 !_TAG_FILE_SORTED	0	/0=unsorted, 1=sorted, 2=foldcase/
-!_TAG_PROGRAM_AUTHOR	Roberto Perpuly	/roberto@mvceditor.com/
+!_TAG_PROGRAM_AUTHOR	Roberto Perpuly	/roberto@triumph4php.com/
 !_TAG_PROGRAM_NAME	PhD - PHP DocBook	//
 !_TAG_PROGRAM_URL	http://doc.php.net/phd/	/official site/
 !_TAG_PROGRAM_VERSION	1.1.3 forked see https://github.com/robertop/phd	//
