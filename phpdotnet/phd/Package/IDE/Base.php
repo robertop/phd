@@ -305,6 +305,7 @@ abstract class Package_IDE_Base extends Format {
             } else {
                 $this->cchunk['param']['opt'] = 'false';
             }
+			$this->cchunk['param']['role'] = '';
             return;
         }
         $param['name'] = $this->cchunk['param']['name'];
