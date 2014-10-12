@@ -69,7 +69,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	
 	/**
 	 * we want to capture both function name and the modifiers; since they are in adjacent tags
-	 * we need to the modifiers when we see a modifier, the save it into the funcitonModifiers list
+	 * we need to the modifiers when we see a modifier, the save it into the functionModifiers list
 	 * once we read the function name node.
 	 */
 	private $currentFunctionModifiers;
@@ -102,7 +102,10 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		
 		// tags that hold the predefined variables
 		'varentry' => FALSE,
-		'simplelist' => FALSE
+		'simplelist' => FALSE,
+		
+		// tags that hold function info
+		'methodparam' => FALSE
 		
 	);
 	
@@ -134,7 +137,8 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			'term' => FALSE,
 			'fieldsynopsis' => FALSE,
 			'varentry' => FALSE,
-			'simplelist' => FALSE
+			'simplelist' => FALSE,
+			'methodparam' => FALSE
 		);
 		
 		$header = <<<EOF
@@ -199,6 +203,9 @@ EOF;
 		// the method modifiers
 		$this->elementmap['methodsynopsis'] = 'format_methodsynopsis';
 		$this->textmap['methodname'] = 'format_methodname_text';
+		
+		// parameters
+		$this->elementmap['parameter'] = 'format_parameter';
 		
 		// for predefined exceptions
 		$this->elementmap['part'] = 'format_part';
@@ -499,11 +506,16 @@ EOF;
     private function renderParamBody() {
         $result = array();
         foreach($this->function['params'] as $param) {
+			$paramName = '';
+			if (strcasecmp('reference', $param['role']) == 0) {
+				$paramName = '&';
+			}
             if ($param['optional'] && isset($param['initializer'])) {
-                $result[] = "\${$param['name']} = {$param['initializer']}";
+                $paramName .= "\${$param['name']} = {$param['initializer']}";
             } else {
-                $result[] = "\${$param['name']}";
+                $paramName .= "\${$param['name']}";
             }
+			$result[] = $paramName;
         }
 
         return implode(", ", $result);
@@ -528,6 +540,23 @@ EOF;
 	
 	public function format_simplelist($open, $name, $attrs, $opts) {
 		$this->openNode('simplelist', $open);
+	}
+	
+	public function format_methodparam($open, $name, $attrs, $props) {
+		$this->openNode('methodparam', $open);
+		parent::format_methodparam($open, $name, $attrs, $props);
+	}
+	
+	public function format_parameter($open, $name, $attrs, $opts) {
+		if (!$this->areNodesOpen('methodparam')) {
+			return;
+		}
+		if ($open) {
+			$this->cchunk['param']['role'] = '';
+			if (isset($attrs[Reader::XMLNS_DOCBOOK]['role'])) {
+				$this->cchunk['param']['role'] = $attrs[Reader::XMLNS_DOCBOOK]['role'];
+			}
+		}
 	}
 	
 	private function renderVariable($varName) {
