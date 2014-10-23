@@ -197,6 +197,18 @@ EOF;
 		// <type>string</type>
 		// <varname linkend="exception.props.message">message</varname>
 		// </fieldsynopsis>
+		//
+		// there is also another way that constants are documented
+		//
+		//  <fieldsynopsis>
+		//  <modifier>const</modifier>
+		//  <type>integer</type>
+		//  <varname
+		//    linkend="filesystemiterator.constants.current-as-pathname">
+		//    FilesystemIterator::CURRENT_AS_PATHNAME
+		//  </varname>
+		//  <initializer>32</initializer>
+		//  </fieldsynopsis>
 		$this->elementmap['fieldsynopsis'] = 'format_fieldsynopsis';
 		$this->textmap['varname'] = 'format_varname_text';
 		
@@ -280,6 +292,11 @@ EOF;
 			}
 			else if (strcasecmp($value, 'final') == 0) {
 				$this->currentPropertyInfo['final'] = TRUE;
+			}
+			else if (strcasecmp($value, 'const') == 0) {
+				
+				// some properties are labelled as const  (FileSystemIterator)
+				$this->currentPropertyInfo['const'] = TRUE;
 			}
 		}
 		else if ($this->areNodesOpen('methodsynopsis') && strcasecmp($value, 'public') != 0) {
@@ -365,6 +382,34 @@ EOF;
 		return $tag;
 	}
 	
+	private function renderClassConstant() {
+	
+		// class constants also sometimes commented using the fields with a
+		// constant modifier tag, but they contain
+		// the scope resolution operator. output the proper tag based on
+		// whether the constant is a class constant or not.
+		$indexScopeResolution = stripos($this->current, '::');
+		$className = '';
+		$defineName = $this->currentDefineInfo;
+		$file = '';
+		$exCmd = '0;"';
+		$tag = "{$defineName}\t{$file}\t{$exCmd}\td";
+		if ($indexScopeResolution !== FALSE) {
+			$className = substr($defineName, 0, $indexScopeResolution);
+			$defineName = substr($defineName, $indexScopeResolution + 2); // 2 = skip the'::'
+			$this->currentPropertyInfo = array(
+				'name' => $defineName,
+				'protected' => FALSE,
+				'static' => TRUE,
+				'final' => FALSE,
+				'const' => TRUE,
+			);
+			$this->currentClassInfo['name'] = $className;
+			$tag = $this->renderProperty();
+		}
+		return $tag;
+	}
+	
 	public function format_varname_text($text, $node) {
 		if (!$this->areNodesOpen('fieldsynopsis') && !$this->areNodesOpen('varentry', 'simplelist')) {
 			return;
@@ -384,10 +429,21 @@ EOF;
 				'name' => '',
 				'protected' => FALSE,
 				'static' => FALSE,
-				'final' => FALSE
+				'final' => FALSE,
+				'const' => FALSE,
 			);
 		}
 		else {
+		
+			// some properties are constants, they will have the 
+			// scope resultion operator in the name
+			// lets separate the class from the constant
+			$indexScopeResolution = stripos($this->currentPropertyInfo['name'], '::');
+			if ($indexScopeResolution !== FALSE) {
+				$className = substr($this->currentPropertyInfo['name'], 0, $indexScopeResolution);
+				$constantName = substr($this->currentPropertyInfo['name'], $indexScopeResolution + 2); // 2 = skip the'::'
+				$this->currentPropertyInfo['name'] = $constantName;
+			}
 			$this->writeTag($this->renderProperty());
 		}
 	}
@@ -397,13 +453,17 @@ EOF;
 		$propertyName = $this->currentPropertyInfo['name'];
 		$file = '';
 		$exCmd = '0;"';
-		$tag = "{$propertyName}\t{$file}\t{$exCmd}\tp\tclass:{$className}";
+		$kind = $this->currentPropertyInfo['const'] ? 'o' : 'p';
+		$tag = "{$propertyName}\t{$file}\t{$exCmd}\t{$kind}\tclass:{$className}";
 		$access = array();
 		if ($this->currentPropertyInfo['protected']) {
 			$access[] = 'protected';
 		}
-		if ($this->currentPropertyInfo['static']) {
+		if ($this->currentPropertyInfo['static'] && !$this->currentPropertyInfo['const']) {
 			$access[] = 'static';
+		}
+		if ($this->currentPropertyInfo['const']) {
+			$access[] = 'const';
 		}
 		if ($this->currentPropertyInfo['final']) {
 			$access[] = 'final';
@@ -411,6 +471,7 @@ EOF;
 		if ($access) {
 			$tag .= "\ta:" . join(',', $access);
 		}
+		$tag .= "\tS:" . join(' ', $access) . " {$className}::{$propertyName}";
 		return $tag;
 	}
 	
