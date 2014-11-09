@@ -502,6 +502,14 @@ EOF;
         $this->function['name'] = $this->cchunk['funcname'][0];
         $this->function['version'] = $this->versionInfo($this->function['name']);
         $this->writeTag($this->renderFunction());
+		
+		if (count($this->cchunk['funcname']) > 1) {
+			
+			// this is from extensions that have both an oop interface and
+			// a procedural interface (for example, MySQLi)
+			$this->function['name'] = $this->cchunk['funcname'][1];
+			$this->writeTag($this->renderFunction());
+		}
     }
 	
 	public function format_methodsynopsis($open, $name, $attrs, $props) {
