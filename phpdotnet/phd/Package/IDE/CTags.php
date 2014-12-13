@@ -114,9 +114,16 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	 * proper signature by looking up the signature of the function
 	 * that is being aliased.  we perform two passes; we process
 	 * function aliases last.
-	 * @var array of   original name => alias name
+	 * There may be multiple aliases for a function.
+	 * @var array of   original name => array(alias names)
 	 */
 	private $functionAliases;
+	
+	/**
+	 * @var array of all function aliases, used to check to see if a
+	 *      function is an alias
+	 */
+	private $allFunctionAliases;
 	
 	/**
 	 * the value of the purpose text tag contents
@@ -154,10 +161,10 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			'fieldsynopsis' => FALSE,
 			'varentry' => FALSE,
 			'simplelist' => FALSE,
-			'methodparam' => FALSE,
-			'simpara' => FALSE
+			'methodparam' => FALSE
 		);
 		$this->functionAliases = array();
+		$this->allFunctionAliases = array();
 		
 		$header = <<<EOF
 !_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
@@ -185,7 +192,7 @@ EOF;
 		if (!count($this->functionAliases)) {
 			return;
 		}
-		
+				
 		$this->handleFunctionAliases();
 	}
 	
@@ -207,8 +214,12 @@ EOF;
 			$line = fgets($tagFile);
 			$tag = explode("\t", $line);
 			$isMethodTag = FALSE;
-			if (count($tag) >= 4) {
-				$isMethodTag = stripos($tag[3], "\tclass:") !== FALSE;
+
+			foreach ($tag as $tagItem) {
+				if (stripos($tagItem, "class:") !== FALSE) {
+					$isMethodTag = TRUE;
+					break;
+				}
 			}
 			
 			// the function name is the first column of the tag line			
@@ -217,12 +228,15 @@ EOF;
 
 				// replace the aliased function name with the
 				// new name
-				$tagLines[] = str_replace(
-					$tag[0],
-					$this->functionAliases[$tag[0]],
-					$line
-				);
-					
+				// there may be multiple aliases for a function
+				$aliases = $this->functionAliases[$tag[0]];
+				foreach ($aliases as $alias) {
+					$tagLines[] = str_replace(
+						$tag[0],
+						$alias,
+						$line
+					);
+				}
 			}
 		}
 		
@@ -299,6 +313,7 @@ EOF;
 		// for example fwrite / fputs
 		$this->textmap['function'] = 'format_function_text';
 		$this->textmap['refpurpose'] = 'format_refpurpose_text';
+		$this->elementmap['refpurpose'] = 'format_refpurpose';
 		
 		parent::STANDALONE($value);
 	}
@@ -436,6 +451,10 @@ EOF;
 		}
 		$this->currentDefineInfo = $text;
 	}
+	
+	public function format_refpurpose($open, $name, $attrs, $props) {
+		$this->refPurposeText = '';
+	}
 		
 	public function format_refpurpose_text($text, $node) {
 		$this->refPurposeText = $text;
@@ -458,7 +477,11 @@ EOF;
 		if (stripos($this->refPurposeText, 'alias') === FALSE) {
 			return;
 		}
-		$this->functionAliases[$text] = $this->cchunk['funcname'][0];
+		if (!isset($this->functionAliases[$text])) {
+			$this->functionAliases[$text] = array();
+		}
+		$this->functionAliases[$text][] = $this->cchunk['funcname'][0];
+		$this->allFunctionAliases[$text] = $this->cchunk['funcname'][0];
 	}
 	
 	private function renderDefine() {
@@ -586,7 +609,7 @@ EOF;
         $this->function['version'] = $this->versionInfo($this->function['name']);
 		
 		// dont write function aliases, we must look up the proper signature
-		if (!in_array($this->function['name'], $this->functionAliases)) {
+		if (!in_array($this->function['name'], $this->allFunctionAliases)) {
 			$this->writeTag($this->renderFunction());
 			
 			if (count($this->cchunk['funcname']) > 1) {
