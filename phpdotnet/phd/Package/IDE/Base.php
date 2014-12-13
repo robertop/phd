@@ -313,7 +313,7 @@ abstract class Package_IDE_Base extends Format {
         $param['optional'] = $this->cchunk['param']['opt'];
         $param['role'] = $this->cchunk['param']['role'];
 		
-        if (!empty($this->cchunk['param']['initializer'])) {
+        if (array_key_exists('initializer', $this->cchunk['param'])) {
             $param['initializer'] = $this->cchunk['param']['initializer'];
         }
         $this->cchunk['methodparam'] = $this->dchunk['methodparam'];

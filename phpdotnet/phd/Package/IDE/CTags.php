@@ -74,7 +74,7 @@ class Package_IDE_CTags extends Package_IDE_Base {
 	 */
 	private $currentFunctionModifiers;
 	
-	/**
+	/**	
 	 * This will keep track of which nodes are currently being iterated through.
 	 * Each record in this map will have the XML tag name as its key and
 	 * the value is a boolean value where TRUE means that currently
@@ -106,8 +106,24 @@ class Package_IDE_CTags extends Package_IDE_Base {
 		
 		// tags that hold function info
 		'methodparam' => FALSE
-		
 	);
+	
+	/**
+	 * functions that are aliases of other functions. the DOC
+	 * does NOT document the proper signature, we must lookup the 
+	 * proper signature by looking up the signature of the function
+	 * that is being aliased.  we perform two passes; we process
+	 * function aliases last.
+	 * @var array of   original name => alias name
+	 */
+	private $functionAliases;
+	
+	/**
+	 * the value of the purpose text tag contents
+	 * this is used to determine if the current function is
+	 * an alias of another one.
+	 */
+	private $refPurposeText;
 	
 	public function __construct() {
         $this->registerFormatName('CTags');
@@ -138,8 +154,10 @@ class Package_IDE_CTags extends Package_IDE_Base {
 			'fieldsynopsis' => FALSE,
 			'varentry' => FALSE,
 			'simplelist' => FALSE,
-			'methodparam' => FALSE
+			'methodparam' => FALSE,
+			'simpara' => FALSE
 		);
+		$this->functionAliases = array();
 		
 		$header = <<<EOF
 !_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
@@ -164,6 +182,57 @@ EOF;
 			fclose($this->tagFile);
 			$this->tagFile = NULL;
 		}
+		if (!count($this->functionAliases)) {
+			return;
+		}
+		
+		$this->handleFunctionAliases();
+	}
+	
+	/**
+	 * this method handles function aliases; the PHP documentation will
+	 * not explictly have the function signatures for function aliases; but
+	 * we want the signature to be in the tag file.  Therefore, we  for function
+	 * aliases we must lookup the function being aliases, and make that be
+	 * the new function's signature as well.
+	 * This function assumes that only function are aliased; not methods.
+	 */
+	private function handleFunctionAliases() {
+		$fileName = Config::output_dir() . strtolower($this->getFormatName()) . '/php.tags';
+		$tagFile = fopen($fileName, 'ab+');
+				
+		// i guess we loop through the tag file to find the aliases
+		$tagLines = array();
+		while (!feof($tagFile)) {
+			$line = fgets($tagFile);
+			$tag = explode("\t", $line);
+			$isMethodTag = FALSE;
+			if (count($tag) >= 4) {
+				$isMethodTag = stripos($tag[3], "\tclass:") !== FALSE;
+			}
+			
+			// the function name is the first column of the tag line			
+			// make sure to methods
+			if (!$isMethodTag && isset($this->functionAliases[$tag[0]])) {
+
+				// replace the aliased function name with the
+				// new name
+				$tagLines[] = str_replace(
+					$tag[0],
+					$this->functionAliases[$tag[0]],
+					$line
+				);
+					
+			}
+		}
+		
+		// now we have all the signature lets write out the tags
+		fseek($tagFile, -1, SEEK_END);
+		foreach ($tagLines as $line) {
+			fputs($tagFile, $line);
+		}
+		
+		fclose($tagFile);
 	}
 	
 	public function STANDALONE($value) {
@@ -225,6 +294,11 @@ EOF;
 		// for predefined variables
 		$this->elementmap['phpdoc:varentry'] = 'format_varentry';
 		$this->elementmap['simplelist'] = 'format_simplelist';
+	
+		// for handling of "aliased" functions
+		// for example fwrite / fputs
+		$this->textmap['function'] = 'format_function_text';
+		$this->textmap['refpurpose'] = 'format_refpurpose_text';
 		
 		parent::STANDALONE($value);
 	}
@@ -362,6 +436,30 @@ EOF;
 		}
 		$this->currentDefineInfo = $text;
 	}
+		
+	public function format_refpurpose_text($text, $node) {
+		$this->refPurposeText = $text;
+	}
+	
+	public function format_function_text($text, $node) {
+		if (!isset($this->cchunk['funcname'])) {
+			return;
+		}
+		if (!is_array($this->cchunk['funcname'])) {
+			return;
+		}
+		if (!$this->isFunctionRefSet) {
+			return;
+		}
+		
+		// need to make sure that the current "function" node is inside
+		// the purpose node, and the purpose node mentions that this 
+		// is an alias
+		if (stripos($this->refPurposeText, 'alias') === FALSE) {
+			return;
+		}
+		$this->functionAliases[$text] = $this->cchunk['funcname'][0];
+	}
 	
 	private function renderDefine() {
 	
@@ -479,36 +577,25 @@ EOF;
 	 * override this method so that we write to the opened file pointer.
 	 */
 	public function format_refentry($open, $name, $attrs, $props) {
-		if (!$this->tagFile) {
-			return;
-		}
-        if (!$this->isFunctionRefSet) {
-            return;
-        }
-        if ($open) {
-            $this->function = $this->dfunction;
-            $this->cchunk = $this->dchunk;
-			$this->currentFunctionModifiers = array();
+		$this->currentFunctionModifiers = array();
+		parent::format_refentry($open, $name, $attrs, $props);
+    }
 
-            $this->function['manualid'] =  $attrs[Reader::XMLNS_XML]['id'];
-            return;
-        }
-        if (!isset($this->cchunk['funcname'][0])) {
-             return;
-        }
-        if (false !== strpos($this->cchunk['funcname'][0], ' ')) {
-            return;
-        }
+    public function writeChunk() {
         $this->function['name'] = $this->cchunk['funcname'][0];
         $this->function['version'] = $this->versionInfo($this->function['name']);
-        $this->writeTag($this->renderFunction());
 		
-		if (count($this->cchunk['funcname']) > 1) {
-			
-			// this is from extensions that have both an oop interface and
-			// a procedural interface (for example, MySQLi)
-			$this->function['name'] = $this->cchunk['funcname'][1];
+		// dont write function aliases, we must look up the proper signature
+		if (!in_array($this->function['name'], $this->functionAliases)) {
 			$this->writeTag($this->renderFunction());
+			
+			if (count($this->cchunk['funcname']) > 1) {
+				
+				// this is from extensions that have both an oop interface and
+				// a procedural interface (for example, MySQLi)
+				$this->function['name'] = $this->cchunk['funcname'][1];
+				$this->writeTag($this->renderFunction());
+			}
 		}
     }
 	
@@ -576,13 +663,20 @@ EOF;
         $result = array();
         foreach($this->function['params'] as $param) {
 			$paramName = '';
+			$ref = '';
 			if (strcasecmp('reference', $param['role']) == 0) {
-				$paramName = '&';
+				$ref = '&';
 			}
-            if ($param['optional'] && isset($param['initializer'])) {
-                $paramName .= "\${$param['name']} = {$param['initializer']}";
-            } else {
-                $paramName .= "\${$param['name']}";
+			if (strcasecmp($param['optional'], 'true') == 0 && array_key_exists('initializer', $param)
+					&& strlen($param['initializer']) > 0) {
+				$initializer = $param['initializer'];
+                $paramName .= "[ {$ref}\${$param['name']} = {$initializer} ]";
+            }
+            else if (strcasecmp($param['optional'], 'true') == 0) {
+                $paramName .= "[ {$ref}\${$param['name']} ]";
+            }
+			else {
+                $paramName .= "{$ref}\${$param['name']}";
             }
 			$result[] = $paramName;
         }
