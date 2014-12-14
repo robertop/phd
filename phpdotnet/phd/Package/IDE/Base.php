@@ -53,6 +53,14 @@ abstract class Package_IDE_Base extends Format {
             'change'                => false,
         ),
     );
+	
+	/**
+	 * some functions have  multiple signatures, examples:
+	 * join(), levenshtein(), strtr(), mt_rand(), rand()
+	 * we store each set of return type and params ONLY here
+	 */
+	protected $functionSignatures = array(
+	);
 
     protected $isFunctionRefSet;
     protected $isChangelogRow = false;
@@ -95,19 +103,26 @@ abstract class Package_IDE_Base extends Format {
         }
         $this->function['name'] = $this->cchunk['funcname'][0];
         $this->function['version'] = $this->versionInfo($this->function['name']);
-        $data = $this->parseFunction();
+		
+		foreach ($this->functionSignatures as $signature) {
+			
+			$this->function['return']['type'] = $signature['return_type'];
+			$this->function['params'] = $signature['params'];
+		
+			$data = $this->parseFunction();
 
-        $filename = $this->getOutputDir() . $this->function['name'] . $this->getExt();
-        file_put_contents($filename, $data);
+			$filename = $this->getOutputDir() . $this->function['name'] . $this->getExt();
+			file_put_contents($filename, $data);
 
-        $index = 0;
-        while(isset($this->cchunk['funcname'][++$index])) {
-            $filename = $this->getOutputDir() . $this->cchunk['funcname'][$index] . $this->getExt();
-            // Replace the default function name by the alternative one
-            $content = preg_replace('/' . $this->cchunk['funcname'][0] . '/',
-                $this->cchunk['funcname'][$index], $data, 1);
-            file_put_contents($filename, $content);
-        }
+			$index = 0;
+			while(isset($this->cchunk['funcname'][++$index])) {
+				$filename = $this->getOutputDir() . $this->cchunk['funcname'][$index] . $this->getExt();
+				// Replace the default function name by the alternative one
+				$content = preg_replace('/' . $this->cchunk['funcname'][0] . '/',
+					$this->cchunk['funcname'][$index], $data, 1);
+				file_put_contents($filename, $content);
+			}
+		}
     }
 
     public function renderHTML() {
@@ -242,6 +257,7 @@ abstract class Package_IDE_Base extends Format {
         if ($open) {
             $this->function = $this->dfunction;
             $this->cchunk = $this->dchunk;
+			$this->functionSignatures = array();
 
             $this->function['manualid'] =  $attrs[Reader::XMLNS_XML]['id'];
             return;
@@ -288,6 +304,10 @@ abstract class Package_IDE_Base extends Format {
         if ($this->role == 'description') {
             if (isset($this->cchunk['methodparam']) && !$this->cchunk['methodparam']) {
                 $this->function['return']['type'] = $value;
+				$this->functionSignatures[] = array(
+					'return_type' => $value,
+					'params' => array()
+				);
                 return;
             }
             $this->cchunk['param']['type'] = $value;
@@ -302,6 +322,7 @@ abstract class Package_IDE_Base extends Format {
             $this->cchunk['methodparam'] = true;
             if (isset($attrs[Reader::XMLNS_DOCBOOK]['choice']) && $attrs[Reader::XMLNS_DOCBOOK]['choice'] == 'opt') {
                 $this->cchunk['param']['opt'] = 'true';
+				
             } else {
                 $this->cchunk['param']['opt'] = 'false';
             }
@@ -319,6 +340,18 @@ abstract class Package_IDE_Base extends Format {
         $this->cchunk['methodparam'] = $this->dchunk['methodparam'];
         $this->cchunk['param'] = $this->dchunk['param'];
         $this->function['params'][$param['name']] = $param;
+		
+		if (empty($this->functionSignatures)) {
+			$this->functionSignatures[] = array(
+				'return_type' => '',
+				'params' => array(
+					$param['name'] => $param
+				)
+			);
+		}
+		else { 
+			$this->functionSignatures[count($this->functionSignatures) - 1]['params'][$param['name']] = $param;
+		}
     }
 
     public function format_parameter_text($value, $tag) {
@@ -342,6 +375,13 @@ abstract class Package_IDE_Base extends Format {
             $content = $this->renderHTML();
             if (isset($this->cchunk['currentParam']) && isset($this->function['params'][$this->cchunk['currentParam']])) {
                 $this->function['params'][$this->cchunk['currentParam']]['description'] = $content;
+				
+				// when a function has multiple signatures, make sure that the signature
+				// has the parameter with this name, we don't want to add a param here
+				if (isset($this->functionSignatures[count($this->functionSignatures) - 1]) &&
+					isset($this->functionSignatures[count($this->functionSignatures) - 1]['params'][$this->cchunk['currentParam']])) {
+					$this->functionSignatures[count($this->functionSignatures) - 1]['params'][$this->cchunk['currentParam']]['description'] = $content;
+				}
             }
         }
     }

@@ -607,17 +607,23 @@ EOF;
     public function writeChunk() {
         $this->function['name'] = $this->cchunk['funcname'][0];
         $this->function['version'] = $this->versionInfo($this->function['name']);
-		
-		// dont write function aliases, we must look up the proper signature
-		if (!in_array($this->function['name'], $this->allFunctionAliases)) {
-			$this->writeTag($this->renderFunction());
+		foreach ($this->functionSignatures as $signature) {
 			
-			if (count($this->cchunk['funcname']) > 1) {
-				
-				// this is from extensions that have both an oop interface and
-				// a procedural interface (for example, MySQLi)
-				$this->function['name'] = $this->cchunk['funcname'][1];
+			
+			$this->function['return']['type'] = $signature['return_type'];
+			$this->function['params'] = $signature['params'];
+		
+			// dont write function aliases, we must look up the proper signature
+			if (!in_array($this->function['name'], $this->allFunctionAliases)) {
 				$this->writeTag($this->renderFunction());
+				
+				if (count($this->cchunk['funcname']) > 1) {
+					
+					// this is from extensions that have both an oop interface and
+					// a procedural interface (for example, MySQLi)
+					$this->function['name'] = $this->cchunk['funcname'][1];
+					$this->writeTag($this->renderFunction());
+				}
 			}
 		}
     }
